@@ -1,0 +1,44 @@
+import { api } from "./client";
+import type { Connection, ConnectionType, QueryResult, QuerySpec } from "./types";
+
+export interface ConnectionInput {
+  name: string;
+  type: ConnectionType;
+  description: string;
+  config: Record<string, unknown>;
+  secret?: Record<string, string>;
+}
+
+export async function listConnections(): Promise<Connection[]> {
+  const res = await api.get<Connection[]>("/connections/");
+  return res.data ?? [];
+}
+
+export async function getConnection(id: string): Promise<Connection> {
+  const res = await api.get<Connection>(`/connections/${id}`);
+  return res.data;
+}
+
+export async function createConnection(input: ConnectionInput): Promise<Connection> {
+  const res = await api.post<Connection>("/connections/", input);
+  return res.data;
+}
+
+export async function updateConnection(id: string, input: ConnectionInput): Promise<Connection> {
+  const res = await api.put<Connection>(`/connections/${id}`, input);
+  return res.data;
+}
+
+export async function deleteConnection(id: string): Promise<void> {
+  await api.delete(`/connections/${id}`);
+}
+
+export async function testConnection(id: string): Promise<{ healthy: boolean; error?: string }> {
+  const res = await api.post<{ healthy: boolean; error?: string }>(`/connections/${id}/test`);
+  return res.data;
+}
+
+export async function queryConnection(id: string, spec: QuerySpec): Promise<QueryResult> {
+  const res = await api.post<QueryResult>(`/connections/${id}/query`, spec);
+  return res.data;
+}

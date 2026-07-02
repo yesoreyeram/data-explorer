@@ -1,0 +1,210 @@
+# Developer Guide
+
+This guide covers local setup, day-to-day conventions, and how to extend the
+two things most likely to grow: connector types and workflow node types. For
+the system design rationale, see [`ARCHITECTURE.md`](ARCHITECTURE.md); for
+the threat model, see [`SECURITY.md`](SECURITY.md).
+
+## Prerequisites
+
+- Go 1.25+
+- Node.js 20+ and npm
+- PostgreSQL 14+ (local install, or via Docker)
+
+## Local setup
+
+### 1. Database
+
+Any local Postgres works. Quick version with a system install:
+
+```bash
+sudo -u postgres psql -c "CREATE USER data_explorer WITH PASSWORD 'data_explorer';"
+sudo -u postgres psql -c "CREATE DATABASE data_explorer OWNER data_explorer;"
+```
+
+### 2. Backend
+
+```bash
+cd backend
+go mod download
+
+export DATABASE_URL="postgres://data_explorer:data_explorer@localhost:5432/data_explorer?sslmode=disable"
+go run ./cmd/server
+```
+
+On startup the server applies its own embedded migrations
+(`db/migrations/*.sql`) and seeds the `admin`/`editor`/`viewer` roles - there
+is nothing else to run. It listens on `:8080` by default.
+
+Run the test suite:
+
+```bash
+go test ./...
+go vet ./...
+```
+
+### 3. Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Vite serves on `:5173` and proxies `/api/v1`, `/healthz`, `/readyz` to
+`localhost:8080` (see `frontend/vite.config.ts`) - so in dev, the frontend
+talks to relative URLs and never needs a CORS round trip. In production,
+put both services behind a reverse proxy on the same origin, or set
+`VITE_API_URL` to the API's absolute URL at build time.
+
+Type-check, lint, build:
+
+```bash
+npx tsc -b
+npm run lint
+npm run build
+```
+
+### 4. First login
+
+Register a user through the UI (or `POST /api/v1/auth/register`). New
+accounts start as `viewer`. Promote yourself to `admin` directly in the
+database once:
+
+```sql
+INSERT INTO user_roles (user_id, role_id)
+SELECT u.id, r.id FROM users u, roles r
+WHERE u.email = 'you@example.com' AND r.name = 'admin';
+```
+
+## Environment variables (backend)
+
+All configuration is environment variables (`internal/config/config.go`) -
+no config files. Everything has a safe local-dev default except in
+`APP_ENV=production`, where `JWT_SIGNING_KEY` and `CONNECTION_ENCRYPTION_KEY`
+are required.
+
+| Variable                     | Default                                   | Notes                                              |
+| ----------------------------- | ------------------------------------------ | --------------------------------------------------- |
+| `APP_ENV`                     | `development`                             | `production` enables stricter validation + secure cookies |
+| `HTTP_ADDR`                    | `:8080`                                   |                                                       |
+| `HTTP_ALLOWED_ORIGINS`         | `http://localhost:5173`                   | comma-separated CORS allow-list                     |
+| `DATABASE_URL`                 | `postgres://data_explorer:...@localhost/...` | pgx connection string                            |
+| `JWT_SIGNING_KEY`               | dev-only insecure default                 | **required**, ≥32 bytes, in production              |
+| `CONNECTION_ENCRYPTION_KEY`     | dev-only insecure default                 | **required** in production; `openssl rand -base64 32` |
+| `ACCESS_TOKEN_TTL`              | `15m`                                     |                                                       |
+| `REFRESH_TOKEN_TTL`             | `168h` (7d)                               |                                                       |
+| `LOG_LEVEL` / `LOG_FORMAT`      | `info` / `json`                           | `LOG_FORMAT=text` for readable local dev logs        |
+
+## Code conventions
+
+- **Repository / Service split**: every domain package (`auth`,
+  `connections`, `workflow`, `audit`) has a `Repository` (SQL only) and a
+  `Service` (business rules + validation, calls the repository). Handlers
+  call services only, never repositories or SQL directly.
+- **Errors**: repositories return sentinel errors (`ErrNotFound`,
+  `ErrConflict`) that handlers translate to HTTP status codes with
+  `errors.Is`. Don't leak driver-specific errors (`pgx.ErrNoRows`, SQL state
+  codes) past the repository boundary.
+- **No comments explaining *what* the code does** - names should do that.
+  Comments are reserved for *why* something non-obvious is the way it is
+  (see the existing code for the tone to match).
+- **Tests** live next to the code they test (`_test.go`). Favor pure,
+  dependency-free unit tests (see `internal/workflow/engine_test.go`, which
+  exercises the DAG engine with a stub source node instead of a real
+  database) over integration tests that need a live Postgres, where
+  possible.
+
+## Adding a new connection type (connector)
+
+Connectors implement one interface (`internal/connections/connector.go`):
+
+```go
+type Connector interface {
+    Test(ctx context.Context, config json.RawMessage, secret map[string]string) error
+    Execute(ctx context.Context, config json.RawMessage, secret map[string]string, spec QuerySpec) (QueryResult, error)
+}
+```
+
+Steps, using the existing connectors as templates
+(`internal/connections/connectors/{postgres,mysql,rest}.go`):
+
+1. Create `internal/connections/connectors/<name>.go`. Define a config
+   struct for the non-secret fields (host, base URL, ...) and read secrets
+   out of the `secret map[string]string` passed to you (never log it).
+2. If your source can execute arbitrary read queries, reuse
+   `EnsureReadOnlySQL` from `sqlguard.go` for defense-in-depth, or apply an
+   equivalent guard for your query language.
+3. Respect `connections.EffectiveRowLimit(spec.RowLimit)` and set a context
+   timeout - every connector must be bounded.
+4. Return results as `connections.QueryResult{Columns, Rows, RowCount,
+   Truncated}` - `Rows` is `[]map[string]any`, one map per row.
+5. Register it in `cmd/server/main.go`:
+   ```go
+   connectorRegistry.Register("my-source", connectors.NewMySource())
+   ```
+6. Add the type to `domain.ConnectionType` (`internal/domain/models.go`) and
+   to the frontend's `ConnectionType` union (`frontend/src/api/types.ts`) and
+   `ConnectionFormModal.tsx` (add the type-specific fields).
+
+## Adding a new workflow node type
+
+Node executors implement `nodes.Executor`
+(`internal/workflow/nodes/types.go`):
+
+```go
+type Executor interface {
+    Execute(ctx context.Context, deps Deps, in ExecInput) (connections.QueryResult, error)
+}
+```
+
+Steps, using `internal/workflow/nodes/{transform,filter,join,aggregate}.go`
+as templates:
+
+1. Create `internal/workflow/nodes/<name>.go`. Read your node's config from
+   `in.Config` (JSON), and its upstream data from `in.Inputs` -
+   `in.SingleInput()` for the common one-input case, or
+   `in.Inputs["left"]`/`in.Inputs["right"]`-style named handles if your node
+   needs multiple distinguishable inputs (see `join.go`).
+2. Register it in `nodes.DefaultRegistry()` (`internal/workflow/nodes/types.go`).
+3. Add the type to `workflow.NodeType` (`internal/workflow/definition.go`)
+   so it passes `Definition.Validate()`.
+4. On the frontend: add it to `NodeType` (`frontend/src/api/types.ts`), the
+   palette (`WorkflowBuilderPage.tsx`'s `PALETTE`/`DEFAULT_CONFIG`), an icon
+   in `pages/workflow/workflowIcons.tsx` + `FlowNode.tsx`'s `META` map, and a
+   config form in `pages/workflow/NodeConfigPanel.tsx`.
+5. Write a table-driven test in `internal/workflow/nodes/<name>_test.go` and,
+   if it changes how the engine wires inputs, extend
+   `internal/workflow/engine_test.go`.
+
+## Database migrations
+
+Migrations are plain `.sql` files in `backend/db/migrations/`, embedded into
+the binary and applied automatically on startup by
+`internal/platform/migrator`, tracked in a `schema_migrations` table. To add
+one: create `NNNN_description.sql` with the next number (lexical ordering =
+apply order), forward-only (no down migrations by design - roll forward with
+a new corrective migration instead).
+
+## API surface
+
+All routes are under `/api/v1`, JSON in/out, bearer-token authenticated
+(except `/auth/login|register|refresh`). See `internal/api/router.go` for
+the definitive route table and the permission required per route; the
+handler for each lives in `internal/api/handlers/`.
+
+Two infrastructure endpoints sit outside the API version prefix:
+`/healthz` (liveness), `/readyz` (readiness), `/metrics` (Prometheus).
+
+## Troubleshooting
+
+- **"JWT_SIGNING_KEY must be set..." on boot**: you're running with
+  `APP_ENV=production` without setting the required secrets. Set them, or
+  unset `APP_ENV`/use `development` locally.
+- **Frontend gets 401s in the browser console on first load**: expected -
+  the app always attempts a silent `/auth/refresh` on mount to restore a
+  session from the cookie; with no prior login there's no cookie yet, so it
+  401s once and falls back to the login page.
+- **`only SELECT queries are allowed`**: the SQL guard rejected your query;
+  see [`SECURITY.md`](SECURITY.md#data-source-access-sql-connectors). Only
+  single `SELECT`/`WITH` statements are permitted through the API.
