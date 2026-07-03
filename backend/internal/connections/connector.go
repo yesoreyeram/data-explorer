@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/yesoreyeram/data-explorer/backend/pkg/dataframe"
 )
@@ -60,9 +61,45 @@ type GraphQLSpec struct {
 	DataPath string `json:"dataPath,omitempty"`
 }
 
+// CloudQuerySpec is the query payload for the "aws", "gcp", and "azure"
+// connection types. Which fields apply depends on the connection's
+// configured Service (see each cloud's connector file for the exact
+// mapping) - e.g. Athena/BigQuery/Log Analytics read Query, DynamoDB reads
+// TableName+KeyConditionExpression, S3/GCS/Blob Storage read
+// Bucket+Key/Prefix.
+type CloudQuerySpec struct {
+	// Query is a SQL (Athena, BigQuery) or KQL (Azure Log Analytics) query,
+	// or a CloudWatch Logs Insights query string.
+	Query string `json:"query,omitempty"`
+
+	// LogGroupNames (CloudWatch Logs) and TimeRange (CloudWatch Logs, Log
+	// Analytics) bound a log query.
+	LogGroupNames []string   `json:"logGroupNames,omitempty"`
+	StartTime     *time.Time `json:"startTime,omitempty"`
+	EndTime       *time.Time `json:"endTime,omitempty"`
+
+	// DynamoDB
+	TableName                 string            `json:"tableName,omitempty"`
+	IndexName                 string            `json:"indexName,omitempty"`
+	Scan                      bool              `json:"scan,omitempty"` // true = Scan, false = Query
+	KeyConditionExpression    string            `json:"keyConditionExpression,omitempty"`
+	FilterExpression          string            `json:"filterExpression,omitempty"`
+	ExpressionAttributeNames  map[string]string `json:"expressionAttributeNames,omitempty"`
+	ExpressionAttributeValues map[string]any    `json:"expressionAttributeValues,omitempty"`
+
+	// Object storage (S3 / GCS / Azure Blob Storage): Key reads one object;
+	// Prefix (with Key empty) lists objects under it as rows instead.
+	Bucket    string `json:"bucket,omitempty"` // container name, for Azure
+	Key       string `json:"key,omitempty"`
+	Prefix    string `json:"prefix,omitempty"`
+	Format    string `json:"format,omitempty"` // csv|json|ndjson, default inferred from the key's extension
+	Delimiter string `json:"delimiter,omitempty"`
+}
+
 // QuerySpec is a connector-agnostic request. Which fields apply depends on
 // the connection type: SQL connectors read SQL/Params, REST reads
-// Method/Path/Query/Body(+Pagination), GraphQL reads GraphQL(+Pagination).
+// Method/Path/Query/Body(+Pagination), GraphQL reads GraphQL(+Pagination),
+// and the cloud provider connectors (aws/gcp/azure) read Cloud.
 type QuerySpec struct {
 	SQL      string            `json:"sql,omitempty"`
 	Params   []any             `json:"params,omitempty"`
@@ -75,6 +112,7 @@ type QuerySpec struct {
 
 	Pagination *PaginationSpec `json:"pagination,omitempty"`
 	GraphQL    *GraphQLSpec    `json:"graphql,omitempty"`
+	Cloud      *CloudQuerySpec `json:"cloud,omitempty"`
 }
 
 // MaxRowLimit is a hard ceiling applied regardless of what a caller requests,

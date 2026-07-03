@@ -47,6 +47,9 @@ const (
 	ConnectionTypeMySQL    ConnectionType = "mysql"
 	ConnectionTypeREST     ConnectionType = "rest"
 	ConnectionTypeGraphQL  ConnectionType = "graphql"
+	ConnectionTypeAWS      ConnectionType = "aws"
+	ConnectionTypeGCP      ConnectionType = "gcp"
+	ConnectionTypeAzure    ConnectionType = "azure"
 )
 
 type ConnectionStatus string

@@ -10,6 +10,12 @@ in from day one.
   whatever the upstream actually requires — Basic, Bearer, API key, Digest,
   OAuth2 (client credentials or refresh token), self-signed JWT, workload
   identity federation, or Kerberos/SPNEGO.
+- **Query major cloud providers** directly: AWS (Athena, CloudWatch Logs
+  Insights, DynamoDB, S3), Google Cloud (BigQuery, Cloud Storage), and Azure
+  (Log Analytics, Blob Storage) — with static credentials as an option, but
+  defaulting to each cloud's own ambient identity (IAM role, Application
+  Default Credentials, or `DefaultAzureCredential`) so nothing long-lived has
+  to be stored.
 - **Build** Postman/n8n-style pipelines: drag source, filter, transform
   ([JSONata](https://jsonata.org)), join, and aggregate nodes onto a canvas
   and wire them together. Every node speaks the same typed, metadata-rich
@@ -32,9 +38,11 @@ in from day one.
 | ![Dashboard](docs/screenshots/02-dashboard-light.png) Dashboard overview | ![Workflow builder](docs/screenshots/08-workflow-builder-dark.png) Workflow builder |
 | ![Connection auth](docs/screenshots/05-connection-form-graphql-oauth2.png) Connection auth (GraphQL + OAuth2) | ![Dataframe result](docs/screenshots/06-dataframe-query-result.png) Query result with dataframe metadata |
 | ![Run output & lineage](docs/screenshots/09-workflow-run-output.png) Run output with lineage | ![Audit log](docs/screenshots/10-audit-log.png) Audit log |
+| ![AWS connection](docs/screenshots/12-connection-form-aws-athena.png) AWS connection (Athena) | ![GCP connection](docs/screenshots/13-connection-form-gcp-bigquery.png) Google Cloud connection (BigQuery) |
 
 More in [`docs/screenshots/`](docs/screenshots/), including the login page,
-connections list, workflows list, and user/role administration.
+connections list, workflows list, user/role administration, and the Azure
+connection form.
 
 ## Stack
 
@@ -46,6 +54,7 @@ connections list, workflows list, and user/role administration.
 | Transform | [JSONata](https://jsonata.org) (via `blues/jsonata-go`)               |
 | Tabular data | `backend/pkg/dataframe` — standalone pandas-style Frame/Schema/Metadata library |
 | HTTP client  | `backend/pkg/httpclient` — standalone client with pluggable auth + pagination |
+| Cloud SDKs   | `aws-sdk-go-v2`, `cloud.google.com/go/{bigquery,storage}`, `azure-sdk-for-go` |
 
 Two of the backend packages are deliberately standalone, dependency-free
 libraries rather than being woven into the app:

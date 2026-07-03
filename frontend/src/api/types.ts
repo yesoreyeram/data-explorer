@@ -17,8 +17,12 @@ export interface User {
   updatedAt: string;
 }
 
-export type ConnectionType = "postgres" | "mysql" | "rest" | "graphql";
+export type ConnectionType = "postgres" | "mysql" | "rest" | "graphql" | "aws" | "gcp" | "azure";
 export type ConnectionStatus = "unverified" | "healthy" | "unhealthy";
+
+export type AWSService = "athena" | "cloudwatchLogs" | "dynamodb" | "s3";
+export type GCPService = "bigquery" | "gcs";
+export type AzureService = "logAnalytics" | "blobStorage";
 
 // Mirrors backend/internal/connections/connectors.AuthConfig. Which fields
 // apply depends on authType - see the backend struct's field comments for
@@ -101,6 +105,29 @@ export interface GraphQLSpec {
   dataPath?: string;
 }
 
+// Mirrors backend/internal/connections.CloudQuerySpec.
+export interface CloudQuerySpec {
+  query?: string;
+
+  logGroupNames?: string[];
+  startTime?: string;
+  endTime?: string;
+
+  tableName?: string;
+  indexName?: string;
+  scan?: boolean;
+  keyConditionExpression?: string;
+  filterExpression?: string;
+  expressionAttributeNames?: Record<string, string>;
+  expressionAttributeValues?: Record<string, unknown>;
+
+  bucket?: string;
+  key?: string;
+  prefix?: string;
+  format?: "csv" | "json" | "ndjson";
+  delimiter?: string;
+}
+
 export interface QuerySpec {
   sql?: string;
   params?: unknown[];
@@ -112,6 +139,7 @@ export interface QuerySpec {
   rowLimit?: number;
   pagination?: PaginationSpec;
   graphql?: GraphQLSpec;
+  cloud?: CloudQuerySpec;
 }
 
 // ---- dataframe wire format (mirrors backend/pkg/dataframe.Frame's JSON) ----

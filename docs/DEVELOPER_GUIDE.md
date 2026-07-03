@@ -177,6 +177,41 @@ workload identity federation, Kerberos):
    (see the existing ones for the pattern - assert on what the server
    actually received, not just that `Authenticate` didn't error).
 
+### Adding a new service to an existing cloud connector
+
+`aws`, `gcp`, and `azure` are each one `Connector`, but each dispatches on a
+`config.service` field to one of several sub-implementations (see
+[`ARCHITECTURE.md`](ARCHITECTURE.md#cloud-provider-connectors)). To add a new
+service to a cloud that's already wired up (e.g. AWS Redshift Data API
+alongside Athena):
+
+1. Add the service's non-secret config fields (if any) to that cloud's config
+   struct (`AWSConfig`/`GCPConfig`/`AzureConfig` in `connectors/{aws,gcp,azure}.go`)
+   and its `service` to the validation switch in `parseConfig`.
+2. Create `internal/connections/connectors/<cloud>_<service>.go` with
+   `test<Service>`/`execute<Service>` functions, following the shape of the
+   existing ones (e.g. `aws_athena.go`). Reuse the cloud's shared credential
+   helper (`awsConfig`/`gcpClientOptions`/`azureCredential`) rather than
+   building a client from scratch - that's what keeps the ambient-credential
+   fallback working for every service under that cloud.
+3. If the service's underlying API is async (start-then-poll, like Athena and
+   CloudWatch Logs Insights), poll with `AsyncQueryPollInterval`/
+   `AsyncQueryMaxWait` from `cloudguardrails.go` rather than a bespoke loop.
+   If it reads objects (like S3/GCS/Blob Storage), reuse
+   `objectparse.go`'s `InferObjectFormat`/`ParseObjectRows` and cap reads at
+   `MaxObjectBytes`.
+4. Wire the new `service` value into the cloud's `Test`/`Execute` dispatch
+   switch (`connectors/{aws,gcp,azure}.go`).
+5. On the frontend: add the service to the relevant `AWSService`/
+   `GCPService`/`AzureService` union (`frontend/src/api/types.ts`), its option
+   in `CloudConnectionFields.tsx` (connection-level config) and, if it needs
+   query-time parameters beyond what `CloudQuerySpec` already covers, extend
+   `CloudQuerySpec` and `CloudQueryFields.tsx`.
+6. Add a `parseConfig`/credential-selection test in
+   `connectors/<cloud>_test.go` (see the existing ones - actual SDK calls
+   aren't exercised in CI, so these tests cover config validation and which
+   credential path gets chosen, not live cloud behavior).
+
 ## Adding a new workflow node type
 
 Node executors implement `nodes.Executor` (`internal/workflow/nodes/types.go`),

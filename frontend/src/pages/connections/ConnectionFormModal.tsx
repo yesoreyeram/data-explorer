@@ -3,6 +3,7 @@ import { useState, type FormEvent } from "react";
 import { Modal } from "../../components/Modal";
 import type { AuthType, Connection, ConnectionType } from "../../api/types";
 import { AUTH_TYPE_OPTIONS, AuthTypeFields } from "./AuthTypeFields";
+import { CloudConnectionFields } from "./CloudConnectionFields";
 
 interface ConnectionFormModalProps {
   connection?: Connection;
@@ -21,6 +22,9 @@ const TYPE_LABELS: Record<ConnectionType, string> = {
   mysql: "MySQL",
   rest: "REST API",
   graphql: "GraphQL API",
+  aws: "AWS",
+  gcp: "Google Cloud",
+  azure: "Microsoft Azure",
 };
 
 function str(v: unknown): string {
@@ -45,6 +49,7 @@ export function ConnectionFormModal({ connection, onClose, onSubmit }: Connectio
   const [endpoint, setEndpoint] = useState(str(initialCfg.endpoint));
   const [authType, setAuthType] = useState<AuthType>((initialCfg.authType as AuthType) ?? "none");
   const [httpConfig, setHttpConfig] = useState<Record<string, unknown>>(initialCfg);
+  const [cloudConfig, setCloudConfig] = useState<Record<string, unknown>>(initialCfg);
   const [secret, setSecret] = useState<Record<string, string>>({});
 
   const [submitting, setSubmitting] = useState(false);
@@ -53,8 +58,23 @@ export function ConnectionFormModal({ connection, onClose, onSubmit }: Connectio
   function patchConfig(patch: Record<string, unknown>) {
     setHttpConfig((prev) => ({ ...prev, ...patch }));
   }
+  function patchCloudConfig(patch: Record<string, unknown>) {
+    setCloudConfig((prev) => ({ ...prev, ...patch }));
+  }
   function patchSecret(patch: Record<string, string>) {
     setSecret((prev) => ({ ...prev, ...patch }));
+  }
+  function handleTypeChange(newType: ConnectionType) {
+    setType(newType);
+    // Config/secret are keyed dicts shared across all connection types (e.g. "service"
+    // means something different for aws/gcp/azure) - clear them on type switch so a
+    // field from the previous type can't leak into the new type's rendered form or payload.
+    setHttpConfig({});
+    setCloudConfig({});
+    setSecret({});
+    setAuthType("none");
+    setBaseUrl("");
+    setEndpoint("");
   }
 
   async function handleSubmit(e: FormEvent) {
@@ -71,6 +91,14 @@ export function ConnectionFormModal({ connection, onClose, onSubmit }: Connectio
           description,
           config: { host, port: Number(port), database, user: dbUser, ...(type === "postgres" ? { sslMode } : {}) },
           secret: Object.keys(dbSecret).length > 0 ? dbSecret : undefined,
+        });
+      } else if (type === "aws" || type === "gcp" || type === "azure") {
+        await onSubmit({
+          name,
+          type,
+          description,
+          config: cloudConfig,
+          secret: Object.keys(secret).length > 0 ? secret : undefined,
         });
       } else {
         const config = { ...httpConfig, authType, ...(type === "rest" ? { baseUrl } : { endpoint }) };
@@ -91,6 +119,7 @@ export function ConnectionFormModal({ connection, onClose, onSubmit }: Connectio
   }
 
   const isHTTP = type === "rest" || type === "graphql";
+  const isCloud = type === "aws" || type === "gcp" || type === "azure";
 
   return (
     <Modal
@@ -117,7 +146,7 @@ export function ConnectionFormModal({ connection, onClose, onSubmit }: Connectio
             className="select"
             value={type}
             disabled={isEdit}
-            onChange={(e) => setType(e.target.value as ConnectionType)}
+            onChange={(e) => handleTypeChange(e.target.value as ConnectionType)}
           >
             {Object.entries(TYPE_LABELS).map(([value, label]) => (
               <option key={value} value={value}>
@@ -220,6 +249,17 @@ export function ConnectionFormModal({ connection, onClose, onSubmit }: Connectio
               isEdit={isEdit}
             />
           </>
+        )}
+
+        {isCloud && (
+          <CloudConnectionFields
+            type={type}
+            config={cloudConfig}
+            onConfigChange={patchCloudConfig}
+            secret={secret}
+            onSecretChange={patchSecret}
+            isEdit={isEdit}
+          />
         )}
       </form>
     </Modal>

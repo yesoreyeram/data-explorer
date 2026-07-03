@@ -3,13 +3,16 @@ import { useState } from "react";
 import { Modal } from "../../components/Modal";
 import { DataFrameView } from "../../components/DataFrameView";
 import { PaginationFields } from "../../components/PaginationFields";
+import { CloudQueryFields } from "../../components/CloudQueryFields";
 import { queryConnection } from "../../api/connections";
 import { extractErrorMessage } from "../../api/client";
-import type { Connection, DataFrame, PaginationSpec } from "../../api/types";
+import type { CloudQuerySpec, Connection, DataFrame, PaginationSpec } from "../../api/types";
 
 export function ConnectionQueryModal({ connection, onClose }: { connection: Connection; onClose: () => void }) {
   const isSQL = connection.type === "postgres" || connection.type === "mysql";
   const isGraphQL = connection.type === "graphql";
+  const isCloud = connection.type === "aws" || connection.type === "gcp" || connection.type === "azure";
+  const cloudService = String(connection.config.service ?? "");
 
   const [sql, setSql] = useState("SELECT 1");
   const [path, setPath] = useState("/");
@@ -17,6 +20,7 @@ export function ConnectionQueryModal({ connection, onClose }: { connection: Conn
   const [gqlQuery, setGqlQuery] = useState("query { __typename }");
   const [gqlDataPath, setGqlDataPath] = useState("data");
   const [pagination, setPagination] = useState<PaginationSpec | undefined>(undefined);
+  const [cloudQuery, setCloudQuery] = useState<CloudQuerySpec>({});
   const [rowLimit, setRowLimit] = useState(100);
   const [result, setResult] = useState<DataFrame | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -31,7 +35,9 @@ export function ConnectionQueryModal({ connection, onClose }: { connection: Conn
         ? { sql, rowLimit }
         : isGraphQL
           ? { rowLimit, graphql: { query: gqlQuery, dataPath: gqlDataPath }, pagination }
-          : { method, path, rowLimit, pagination };
+          : isCloud
+            ? { rowLimit, cloud: cloudQuery }
+            : { method, path, rowLimit, pagination };
       const res = await queryConnection(connection.id, spec);
       setResult(res);
     } catch (err) {
@@ -71,7 +77,9 @@ export function ConnectionQueryModal({ connection, onClose }: { connection: Conn
         </>
       )}
 
-      {!isSQL && !isGraphQL && (
+      {isCloud && <CloudQueryFields service={cloudService} value={cloudQuery} onChange={setCloudQuery} />}
+
+      {!isSQL && !isGraphQL && !isCloud && (
         <>
           <div style={{ display: "grid", gridTemplateColumns: "100px 1fr", gap: 12 }}>
             <div className="field">

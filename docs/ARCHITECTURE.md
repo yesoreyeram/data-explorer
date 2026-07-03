@@ -27,12 +27,14 @@ flowchart LR
         PG[(PostgreSQL\nsystem of record)]
         DS1[(Customer Postgres/MySQL)]
         DS2[REST / GraphQL APIs]
+        DS3[AWS / GCP / Azure]
     end
 
     SPA -- HTTPS/JSON --> MW --> H --> SVC
     SVC -- users, roles, connections,\nworkflows, audit_logs --> PG
     SVC -- decrypted, in-memory only --> DS1
     SVC -- decrypted, in-memory only --> DS2
+    SVC -- decrypted or ambient,\nin-memory only --> DS3
 ```
 
 The backend is a single Go binary. There is no queue, no cache, and no
@@ -64,7 +66,7 @@ backend/
     rbac/                  Principal type, permission constants, context helpers
     audit/                 append-only audit log writer + query API
     connections/            connection CRUD, secret encryption, connector interface, per-connection rate limit
-      connectors/           postgres, mysql, rest, graphql implementations + shared auth/pagination glue
+      connectors/           postgres, mysql, rest, graphql, aws, gcp, azure implementations + shared auth/pagination/object-parsing glue
     workflow/                DAG definition, topological execution engine, size/row guardrails
       nodes/                  one executor per node type (source/transform/filter/join/aggregate/output)
     observability/          Prometheus metrics registry
@@ -213,13 +215,63 @@ API response, never logged, and never persisted anywhere in plaintext.
 metadata (the connector itself doesn't know its own connection's ID/name)
 and applies the cross-connector `TruncateCells` guardrail before returning.
 
-Four connector types ship today: `postgres`, `mysql` (both via
+Seven connector types ship today: `postgres`, `mysql` (both via
 `internal/connections/connectors/sqlguard.go`'s read-only statement guard),
-`rest`, and `graphql` (both via `pkg/httpclient`). Adding a new source type
-means implementing the small `Connector` interface
+`rest`, `graphql` (both via `pkg/httpclient`), and `aws`, `gcp`, `azure` (see
+"Cloud provider connectors" below). Adding a new source type means
+implementing the small `Connector` interface
 (`internal/connections/connector.go` - `Test` + `Execute`, returning a
 `*dataframe.Frame`) and registering it in `cmd/server/main.go` - see the
 developer guide for a walkthrough.
+
+## Cloud provider connectors
+
+`aws`, `gcp`, and `azure` are one connector each, but each wraps several
+distinct services behind a `config.service` discriminator, since "query AWS"
+isn't one API:
+
+| Type | `service` values | Client |
+| --- | --- | --- |
+| `aws` | `athena` (SQL), `cloudwatchLogs` (Logs Insights), `dynamodb` (Query/Scan), `s3` (object storage) | `aws-sdk-go-v2` |
+| `gcp` | `bigquery` (SQL), `gcs` (object storage) | `cloud.google.com/go/{bigquery,storage}` |
+| `azure` | `logAnalytics` (KQL), `blobStorage` (object storage) | `azure-sdk-for-go/sdk/{monitor/azquery,storage/azblob}` |
+
+All three take a distinct query shape (SQL string, KQL string, log-group
+names + time range, DynamoDB key/filter expressions, or bucket/key/prefix),
+carried on `QuerySpec.Cloud` (`internal/connections/connector.go`'s
+`CloudQuerySpec`) rather than overloading the SQL-shaped fields the
+`postgres`/`mysql` connectors use.
+
+Two implementation choices are shared across all three clouds specifically
+because the same tension shows up in each SDK:
+
+- **Ambient credentials by default.** Each connector's config accepts
+  optional static credentials in the encrypted secret (AWS access
+  key/secret/session token, a GCP service account key JSON blob, an Azure
+  service-principal tenant/client/secret), but if none are supplied it falls
+  back to the SDK's own default credential chain - `aws-sdk-go-v2`'s
+  `config.LoadDefaultConfig` (IAM role), GCP's Application Default
+  Credentials, `azidentity.NewDefaultAzureCredential`. This mirrors
+  `pkg/httpclient`'s `workloadIdentity` auth scheme's philosophy at the
+  cloud-SDK layer: prefer short-lived, non-stored credentials over a
+  long-lived key sitting in the database, without forcing every deployment
+  to configure one.
+- **Async query polling, hidden behind one call.** Athena and CloudWatch
+  Logs Insights don't have a synchronous "run and wait" API - both are
+  start-then-poll (`StartQueryExecution`/`GetQueryExecution` and
+  `StartQuery`/`GetQueryResults`). Each connector polls internally
+  (`cloudguardrails.go`'s `AsyncQueryPollInterval`/`AsyncQueryMaxWait`, 500ms
+  / 55s) so the caller's `Execute` contract stays synchronous like every
+  other connector. BigQuery and Log Analytics are natively synchronous and
+  need no polling.
+
+Object storage (`s3`/`gcs`/`blobStorage`) shares one more piece:
+`connectors/objectparse.go` infers CSV/JSON/NDJSON from the object key (or an
+explicit `format` override) and parses it into rows, so the same code path
+backs all three clouds' "read one object" mode; "list objects" mode (no key
+given) returns a key/size/lastModified/etag frame instead. Object reads are
+capped at `MaxObjectBytes` (50MB) - there's no streaming path yet, so a
+larger object is a guardrail error, not a slow response.
 
 ## Workflow execution engine
 

@@ -113,6 +113,46 @@ every outbound-call guardrail so no connector has to reimplement them:
   compromise of the API process at rest never exposes a long-lived token
   that wasn't already about to be re-minted.
 
+## Cloud provider connectors (AWS / GCP / Azure)
+
+The `aws`, `gcp`, and `azure` connection types query native cloud services
+(Athena, CloudWatch Logs Insights, DynamoDB, S3; BigQuery, Cloud Storage;
+Log Analytics, Blob Storage) through each provider's official Go SDK rather
+than hand-rolled HTTP calls, so credential handling, retries, and request
+signing all get the SDK's own scrutiny rather than this project's.
+
+- **Credentials are optional in the connection's secret, by design.** If a
+  connection doesn't have static credentials (AWS access key,
+  GCP service-account JSON, Azure client secret) in its encrypted secret,
+  the connector falls back to that cloud's *ambient* identity: the AWS SDK's
+  default credential chain (an IAM role on the EC2 instance/ECS
+  task/EKS pod), GCP Application Default Credentials (a GCE/GKE Workload
+  Identity-bound service account), or Azure's `DefaultAzureCredential`
+  (managed identity / AKS workload identity / `az login` session). Run this
+  server inside the target cloud with the right role attached and no
+  long-lived cloud credential needs to be stored in this database at all -
+  the same principle the generic `workloadIdentity` REST/GraphQL auth
+  scheme applies manually, native here via each SDK.
+- **SQL query engines (Athena, BigQuery) go through the same
+  `EnsureReadOnlySQL` guard as Postgres/MySQL** - a `SELECT`/`WITH` query
+  only, no stacked statements. CloudWatch Logs Insights and Log Analytics
+  use their own read-only query languages (Logs Insights QL, KQL) which
+  have no mutation surface to guard.
+- **Async query APIs (Athena, CloudWatch Logs Insights) are polled with a
+  hard wall-clock cap** (`connectors.AsyncQueryMaxWait`, 55s) - both are
+  start-then-poll APIs with no native blocking "wait" call, so without this
+  a query stuck `RUNNING` would hold the request open indefinitely.
+- **Object storage reads (S3, GCS, Blob Storage) are capped**
+  (`connectors.MaxObjectBytes`, 50MB) before being parsed as
+  CSV/JSON/NDJSON, for the same reason REST responses are capped -
+  someone pointing a connection at a multi-gigabyte file shouldn't be able
+  to bring the process down.
+- **DynamoDB access uses the caller-supplied key condition/filter
+  expressions verbatim** (passed straight to the SDK's expression
+  parameters, never string-concatenated) - the same parameterized-query
+  discipline as the SQL connectors, just via DynamoDB's own expression
+  syntax rather than SQL placeholders.
+
 ## Guardrails at every layer
 
 Defense in depth in one place - each layer assumes the ones "below" it
@@ -126,6 +166,8 @@ might fail:
 | Per connection | per-connection-ID rate limit (protects the *downstream* system) | `connections.Service` |
 | SQL connectors | read-only statement guard, parameterized queries, statement timeout | `connectors/sqlguard.go`, `connectors/postgres.go` |
 | REST/GraphQL connectors | response size cap, redirect cap, bounded jittered retry | `pkg/httpclient` |
+| Cloud query engines (Athena, CloudWatch Logs Insights) | bounded async poll wait (55s) | `connectors.AsyncQueryMaxWait` |
+| Cloud object storage (S3, GCS, Blob Storage) | object size cap (50MB) | `connectors.MaxObjectBytes` |
 | Pagination | max pages (any strategy, including GraphQL relay) | `pkg/httpclient/pagination.go` |
 | Query results | row limit (1,000 default / 10,000 hard cap) | `connections.EffectiveRowLimit` |
 | Every dataframe | oversized single-cell truncation | `dataframe.Frame.TruncateCells` (applied centrally in `connections.Service.Query`) |
@@ -190,3 +232,16 @@ Being upfront about what this is *not*, yet:
 - **Per-connection rate limiting is in-memory and per-instance**, the same
   caveat as the per-IP limiter above: a horizontally-scaled deployment needs
   a shared limiter to enforce a single global budget per connection.
+- **Cloud connector least-privilege is the operator's responsibility, not
+  enforced here.** Same principle as "use a read-only DB role" for
+  Postgres/MySQL: the IAM role/service account/service principal behind an
+  `aws`/`gcp`/`azure` connection should be scoped to exactly the
+  read-only actions it needs (e.g. `athena:GetQueryResults` +
+  `s3:GetObject` on the results bucket, not a broad `s3:*`). This project
+  has no way to inspect or constrain what a cloud credential can actually
+  do once it authenticates.
+- **Cloud connectors can't be exercised end-to-end in CI** the way the SQL
+  and REST/GraphQL connectors can (no local Postgres/httptest-server
+  equivalent for Athena/BigQuery/Log Analytics) - their config validation
+  and credential-selection logic is unit tested, but the actual SDK calls
+  are only verified by hand against real cloud accounts.

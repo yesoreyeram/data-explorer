@@ -1,9 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { listConnections } from "../../api/connections";
-import type { GraphQLSpec, PaginationSpec, WorkflowNode } from "../../api/types";
+import type { CloudQuerySpec, GraphQLSpec, PaginationSpec, WorkflowNode } from "../../api/types";
 import { IconTrash, IconX } from "../../components/icons";
 import { PaginationFields } from "../../components/PaginationFields";
+import { CloudQueryFields } from "../../components/CloudQueryFields";
 
 interface NodeConfigPanelProps {
   node: WorkflowNode;
@@ -66,11 +67,19 @@ function SourceForm({
 }: {
   node: WorkflowNode;
   onChange: NodeConfigPanelProps["onChange"];
-  connections: { id: string; name: string; type: string }[];
+  connections: { id: string; name: string; type: string; config: Record<string, unknown> }[];
 }) {
   const cfg = node.config as {
     connectionId?: string;
-    query?: { sql?: string; method?: string; path?: string; rowLimit?: number; pagination?: PaginationSpec; graphql?: GraphQLSpec };
+    query?: {
+      sql?: string;
+      method?: string;
+      path?: string;
+      rowLimit?: number;
+      pagination?: PaginationSpec;
+      graphql?: GraphQLSpec;
+      cloud?: CloudQuerySpec;
+    };
   };
   const query = cfg.query ?? {};
   const selected = connections.find((c) => c.id === cfg.connectionId);
@@ -78,6 +87,8 @@ function SourceForm({
   const isSQL = connType ? connType === "postgres" || connType === "mysql" : true;
   const isGraphQL = connType === "graphql";
   const isREST = connType === "rest";
+  const isCloud = connType === "aws" || connType === "gcp" || connType === "azure";
+  const cloudService = String(selected?.config.service ?? "");
 
   function setQuery(patch: Record<string, unknown>) {
     onChange(node.id, { config: updateConfig(node, { query: { ...query, ...patch } }) });
@@ -160,6 +171,10 @@ function SourceForm({
           </div>
           <PaginationFields graphqlOnly value={query.pagination} onChange={(p) => setQuery({ pagination: p })} />
         </>
+      )}
+
+      {isCloud && (
+        <CloudQueryFields service={cloudService} value={query.cloud ?? {}} onChange={(c) => setQuery({ cloud: c })} />
       )}
 
       <div className="field">

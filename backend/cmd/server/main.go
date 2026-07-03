@@ -77,6 +77,9 @@ func run() error {
 	connectorRegistry.Register(string(domain.ConnectionTypeMySQL), connectors.NewMySQL())
 	connectorRegistry.Register(string(domain.ConnectionTypeREST), connectors.NewREST())
 	connectorRegistry.Register(string(domain.ConnectionTypeGraphQL), connectors.NewGraphQL())
+	connectorRegistry.Register(string(domain.ConnectionTypeAWS), connectors.NewAWS())
+	connectorRegistry.Register(string(domain.ConnectionTypeGCP), connectors.NewGCP())
+	connectorRegistry.Register(string(domain.ConnectionTypeAzure), connectors.NewAzure())
 
 	connRepo := connections.NewRepository(pool)
 	connSvc := connections.NewService(connRepo, encryptor, connectorRegistry)
