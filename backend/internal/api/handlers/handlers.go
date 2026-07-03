@@ -10,6 +10,7 @@ import (
 
 	"github.com/yesoreyeram/data-explorer/backend/internal/audit"
 	"github.com/yesoreyeram/data-explorer/backend/internal/auth"
+	"github.com/yesoreyeram/data-explorer/backend/internal/catalog"
 	"github.com/yesoreyeram/data-explorer/backend/internal/connections"
 	"github.com/yesoreyeram/data-explorer/backend/internal/workflow"
 )
@@ -20,17 +21,19 @@ type Handlers struct {
 	Audit          *audit.Service
 	Connections    *connections.Service
 	Workflows      *workflow.Service
+	Catalog        *catalog.Service
 	SecureCookies  bool
 	RefreshTTL     time.Duration
 }
 
-func New(authSvc *auth.Service, authRepo *auth.Repository, auditSvc *audit.Service, connSvc *connections.Service, wfSvc *workflow.Service, secureCookies bool, refreshTTL time.Duration) *Handlers {
+func New(authSvc *auth.Service, authRepo *auth.Repository, auditSvc *audit.Service, connSvc *connections.Service, wfSvc *workflow.Service, catalogSvc *catalog.Service, secureCookies bool, refreshTTL time.Duration) *Handlers {
 	return &Handlers{
 		Auth:           authSvc,
 		AuthRepository: authRepo,
 		Audit:          auditSvc,
 		Connections:    connSvc,
 		Workflows:      wfSvc,
+		Catalog:        catalogSvc,
 		SecureCookies:  secureCookies,
 		RefreshTTL:     refreshTTL,
 	}

@@ -212,6 +212,30 @@ alongside Athena):
    aren't exercised in CI, so these tests cover config validation and which
    credential path gets chosen, not live cloud behavior).
 
+## Adding an integration catalog entry
+
+The "Browse catalog" picker on the Connections page (`internal/catalog`,
+see [`ARCHITECTURE.md`](ARCHITECTURE.md#integration-catalog-prefilling-not-proxying))
+is a static, hand-curated list - there's no ingestion pipeline to run. To add
+one:
+
+1. Add an `Entry{}` to the slice in `internal/catalog/seed.go`. `AuthType`
+   must be one of the values `connectors/httpauth.go`'s `AuthConfig.AuthType`
+   already supports (see [`ARCHITECTURE.md`](ARCHITECTURE.md#httpclient-the-outbound-http-layer));
+   `AuthConfig` should only ever carry non-secret fields (a header name, a
+   token URL) - never a placeholder credential.
+2. If the service needs a per-tenant subdomain/workspace id in its URL
+   (Shopify, Salesforce, Zendesk, ...), use a `{placeholder}` in
+   `BaseURL`/`Endpoint` - the form prefills it as-is and the user edits it
+   before saving, same as any other prefilled field.
+3. Add a case to `internal/catalog/service_test.go` if the new entry changes
+   an existing test's expected count (e.g. a new entry in the "Email"
+   category).
+
+There's no frontend change needed - `CatalogBrowserModal.tsx` and
+`ConnectionFormModal.tsx`'s prefill logic are entirely data-driven off
+whatever `GET /api/v1/catalog` returns.
+
 ## Adding a new workflow node type
 
 Node executors implement `nodes.Executor` (`internal/workflow/nodes/types.go`),

@@ -1,12 +1,14 @@
 import { useState, type FormEvent } from "react";
 
 import { Modal } from "../../components/Modal";
-import type { AuthType, Connection, ConnectionType } from "../../api/types";
+import type { AuthType, CatalogEntry, Connection, ConnectionType } from "../../api/types";
 import { AUTH_TYPE_OPTIONS, AuthTypeFields } from "./AuthTypeFields";
 import { CloudConnectionFields } from "./CloudConnectionFields";
 
 interface ConnectionFormModalProps {
   connection?: Connection;
+  /** Prefills a new (non-edit) form from a catalog pick - see CatalogBrowserModal. Ignored when editing. */
+  catalogEntry?: CatalogEntry;
   onClose: () => void;
   onSubmit: (input: {
     name: string;
@@ -31,11 +33,13 @@ function str(v: unknown): string {
   return typeof v === "string" ? v : v == null ? "" : String(v);
 }
 
-export function ConnectionFormModal({ connection, onClose, onSubmit }: ConnectionFormModalProps) {
+export function ConnectionFormModal({ connection, catalogEntry, onClose, onSubmit }: ConnectionFormModalProps) {
   const isEdit = Boolean(connection);
-  const [type, setType] = useState<ConnectionType>(connection?.type ?? "postgres");
-  const [name, setName] = useState(connection?.name ?? "");
-  const [description, setDescription] = useState(connection?.description ?? "");
+  // catalogEntry only ever applies to a brand-new connection, never an edit.
+  const prefill = isEdit ? undefined : catalogEntry;
+  const [type, setType] = useState<ConnectionType>(connection?.type ?? prefill?.type ?? "postgres");
+  const [name, setName] = useState(connection?.name ?? prefill?.name ?? "");
+  const [description, setDescription] = useState(connection?.description ?? prefill?.description ?? "");
 
   const initialCfg = (connection?.config ?? {}) as Record<string, unknown>;
   const [host, setHost] = useState(str(initialCfg.host));
@@ -45,10 +49,14 @@ export function ConnectionFormModal({ connection, onClose, onSubmit }: Connectio
   const [sslMode, setSslMode] = useState(str(initialCfg.sslMode) || "prefer");
   const [password, setPassword] = useState("");
 
-  const [baseUrl, setBaseUrl] = useState(str(initialCfg.baseUrl));
-  const [endpoint, setEndpoint] = useState(str(initialCfg.endpoint));
-  const [authType, setAuthType] = useState<AuthType>((initialCfg.authType as AuthType) ?? "none");
-  const [httpConfig, setHttpConfig] = useState<Record<string, unknown>>(initialCfg);
+  const [baseUrl, setBaseUrl] = useState(connection ? str(initialCfg.baseUrl) : (prefill?.baseUrl ?? ""));
+  const [endpoint, setEndpoint] = useState(connection ? str(initialCfg.endpoint) : (prefill?.endpoint ?? ""));
+  const [authType, setAuthType] = useState<AuthType>(
+    connection ? ((initialCfg.authType as AuthType) ?? "none") : (prefill?.authType ?? "none"),
+  );
+  const [httpConfig, setHttpConfig] = useState<Record<string, unknown>>(
+    connection ? initialCfg : (prefill?.authConfig ?? {}),
+  );
   const [cloudConfig, setCloudConfig] = useState<Record<string, unknown>>(initialCfg);
   const [secret, setSecret] = useState<Record<string, string>>({});
 
@@ -248,6 +256,15 @@ export function ConnectionFormModal({ connection, onClose, onSubmit }: Connectio
               onSecretChange={patchSecret}
               isEdit={isEdit}
             />
+            {prefill && prefill.type === type && prefill.docsUrl && (
+              <p className="field-hint">
+                Get credentials from{" "}
+                <a href={prefill.docsUrl} target="_blank" rel="noreferrer">
+                  {prefill.name}'s auth docs
+                </a>
+                .
+              </p>
+            )}
           </>
         )}
 

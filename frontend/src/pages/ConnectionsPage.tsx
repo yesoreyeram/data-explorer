@@ -10,19 +10,22 @@ import {
   type ConnectionInput,
 } from "../api/connections";
 import { extractErrorMessage } from "../api/client";
-import type { Connection } from "../api/types";
+import type { CatalogEntry, Connection } from "../api/types";
 import { StatusBadge } from "../components/StatusBadge";
 import { PermissionGate } from "../components/PermissionGate";
 import { PERMISSIONS } from "../lib/permissions";
 import { IconPlay, IconPlug, IconPlus, IconRefresh, IconTrash } from "../components/icons";
 import { ConnectionFormModal } from "./connections/ConnectionFormModal";
 import { ConnectionQueryModal } from "./connections/ConnectionQueryModal";
+import { CatalogBrowserModal } from "./connections/CatalogBrowserModal";
 
 export function ConnectionsPage() {
   const queryClient = useQueryClient();
   const { data: connections = [], isLoading, error } = useQuery({ queryKey: ["connections"], queryFn: listConnections });
 
   const [formTarget, setFormTarget] = useState<Connection | "new" | null>(null);
+  const [catalogPrefill, setCatalogPrefill] = useState<CatalogEntry | null>(null);
+  const [catalogOpen, setCatalogOpen] = useState(false);
   const [queryTarget, setQueryTarget] = useState<Connection | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
 
@@ -64,9 +67,14 @@ export function ConnectionsPage() {
           <p className="panel-subtitle">Reusable, credentialed links to your databases and APIs.</p>
         </div>
         <PermissionGate permission={PERMISSIONS.connectionsWrite}>
-          <button className="btn btn-primary" type="button" onClick={() => setFormTarget("new")}>
-            <IconPlus width={14} height={14} /> New connection
-          </button>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn" type="button" onClick={() => setCatalogOpen(true)}>
+              <IconPlug width={14} height={14} /> Browse catalog
+            </button>
+            <button className="btn btn-primary" type="button" onClick={() => setFormTarget("new")}>
+              <IconPlus width={14} height={14} /> New connection
+            </button>
+          </div>
         </PermissionGate>
       </div>
 
@@ -146,13 +154,28 @@ export function ConnectionsPage() {
       {formTarget && (
         <ConnectionFormModal
           connection={formTarget === "new" ? undefined : formTarget}
-          onClose={() => setFormTarget(null)}
+          catalogEntry={formTarget === "new" ? (catalogPrefill ?? undefined) : undefined}
+          onClose={() => {
+            setFormTarget(null);
+            setCatalogPrefill(null);
+          }}
           onSubmit={async (input) => {
             if (formTarget === "new") {
               await createMutation.mutateAsync(input);
             } else {
               await updateMutation.mutateAsync({ id: formTarget.id, input });
             }
+          }}
+        />
+      )}
+
+      {catalogOpen && (
+        <CatalogBrowserModal
+          onClose={() => setCatalogOpen(false)}
+          onSelect={(entry) => {
+            setCatalogPrefill(entry);
+            setCatalogOpen(false);
+            setFormTarget("new");
           }}
         />
       )}

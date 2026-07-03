@@ -18,6 +18,7 @@ import (
 	"github.com/yesoreyeram/data-explorer/backend/internal/api/handlers"
 	"github.com/yesoreyeram/data-explorer/backend/internal/audit"
 	"github.com/yesoreyeram/data-explorer/backend/internal/auth"
+	"github.com/yesoreyeram/data-explorer/backend/internal/catalog"
 	"github.com/yesoreyeram/data-explorer/backend/internal/config"
 	"github.com/yesoreyeram/data-explorer/backend/internal/connections"
 	"github.com/yesoreyeram/data-explorer/backend/internal/connections/connectors"
@@ -89,9 +90,11 @@ func run() error {
 	wfEngine := workflow.NewEngine(nodeRegistry)
 	wfSvc := workflow.NewService(wfRepo, wfEngine, connSvc)
 
+	catalogSvc := catalog.NewService()
+
 	metrics := observability.NewMetrics()
 
-	h := handlers.New(authSvc, authRepo, auditSvc, connSvc, wfSvc, cfg.Env == "production", cfg.Auth.RefreshTokenTTL)
+	h := handlers.New(authSvc, authRepo, auditSvc, connSvc, wfSvc, catalogSvc, cfg.Env == "production", cfg.Auth.RefreshTokenTTL)
 	healthHandler := handlers.NewHealthHandler(pool)
 
 	router := api.NewRouter(cfg, h, healthHandler, tokenManager, metrics)

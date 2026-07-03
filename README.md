@@ -10,6 +10,10 @@ in from day one.
   whatever the upstream actually requires — Basic, Bearer, API key, Digest,
   OAuth2 (client credentials or refresh token), self-signed JWT, workload
   identity federation, or Kerberos/SPNEGO.
+- **Browse a built-in integration catalog** for ~20 well-known APIs (GitHub,
+  Stripe, Slack, Twilio, ...) that prefills a new connection's base URL and
+  auth type in one click — you still supply your own credentials, and
+  nothing is fetched from any external registry to do it.
 - **Query major cloud providers** directly: AWS (Athena, CloudWatch Logs
   Insights, DynamoDB, S3), Google Cloud (BigQuery, Cloud Storage), and Azure
   (Log Analytics, Blob Storage) — with static credentials as an option, but
@@ -39,6 +43,7 @@ in from day one.
 | ![Connection auth](docs/screenshots/05-connection-form-graphql-oauth2.png) Connection auth (GraphQL + OAuth2) | ![Dataframe result](docs/screenshots/06-dataframe-query-result.png) Query result with dataframe metadata |
 | ![Run output & lineage](docs/screenshots/09-workflow-run-output.png) Run output with lineage | ![Audit log](docs/screenshots/10-audit-log.png) Audit log |
 | ![AWS connection](docs/screenshots/12-connection-form-aws-athena.png) AWS connection (Athena) | ![GCP connection](docs/screenshots/13-connection-form-gcp-bigquery.png) Google Cloud connection (BigQuery) |
+| ![Integration catalog](docs/screenshots/15-catalog-browser.png) Integration catalog browser | ![Prefilled connection](docs/screenshots/17-catalog-prefilled-form.png) Connection form prefilled from the catalog |
 
 More in [`docs/screenshots/`](docs/screenshots/), including the login page,
 connections list, workflows list, user/role administration, and the Azure

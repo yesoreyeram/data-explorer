@@ -252,3 +252,20 @@ export interface AuditLog {
 export interface ApiErrorBody {
   error: { code: string; message: string };
 }
+
+// Mirrors backend/internal/catalog.Entry - a static, first-party list of
+// well-known integrations used purely to prefill a rest/graphql connection
+// form. authConfig carries only non-secret fields (matching AuthConfig
+// above); the form's secret fields are always left blank regardless.
+export interface CatalogEntry {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  type: "rest" | "graphql";
+  baseUrl?: string;
+  endpoint?: string;
+  authType: AuthType;
+  authConfig?: Record<string, unknown>;
+  docsUrl?: string;
+}

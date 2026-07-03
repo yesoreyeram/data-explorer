@@ -67,6 +67,7 @@ backend/
     audit/                 append-only audit log writer + query API
     connections/            connection CRUD, secret encryption, connector interface, per-connection rate limit
       connectors/           postgres, mysql, rest, graphql, aws, gcp, azure implementations + shared auth/pagination/object-parsing glue
+    catalog/                static integration catalog (prefill data for the connection form - see below)
     workflow/                DAG definition, topological execution engine, size/row guardrails
       nodes/                  one executor per node type (source/transform/filter/join/aggregate/output)
     observability/          Prometheus metrics registry
@@ -272,6 +273,29 @@ backs all three clouds' "read one object" mode; "list objects" mode (no key
 given) returns a key/size/lastModified/etag frame instead. Object reads are
 capped at `MaxObjectBytes` (50MB) - there's no streaming path yet, so a
 larger object is a guardrail error, not a slow response.
+
+## Integration catalog: prefilling, not proxying
+
+`internal/catalog` is a small, first-party, static registry of ~20 well-known
+integrations (GitHub, Stripe, Slack, Twilio, ...) used purely to prefill a
+new `rest`/`graphql` connection's type, base URL/endpoint, auth type, and
+non-secret auth config - it saves the "what's the base URL and auth scheme
+for X" lookup, nothing more. Each `Entry` is expressed directly in terms of
+`domain.ConnectionType` and the same `AuthType`/`AuthConfig` vocabulary
+`connectors/httpauth.go` already speaks (see "Connections and secrets"
+above), so a catalog pick maps onto fields the connection form already knows
+how to render - there's no separate vocabulary to translate.
+
+This is deliberately *not* a client of any live external registry: the data
+in `internal/catalog/seed.go` is authored once, by hand, and
+`Service.Search` filters it entirely in memory - there's nothing to cache,
+nothing to rate-limit, and no new failure mode where connection creation
+depends on a third party being up. `GET /api/v1/catalog` is read-only and
+reuses `connections:read` rather than a new permission, since it's a
+convenience layered on the existing connection-creation flow, not a new
+resource class. Picking an entry never supplies a credential - the
+connection form's secret fields are always left blank, with the entry's
+`docsUrl` surfaced as a hint for where to go get one.
 
 ## Workflow execution engine
 
