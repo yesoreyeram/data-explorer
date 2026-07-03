@@ -1,7 +1,8 @@
 import { useState, type FormEvent } from "react";
 
 import { Modal } from "../../components/Modal";
-import type { Connection, ConnectionType } from "../../api/types";
+import type { AuthType, Connection, ConnectionType } from "../../api/types";
+import { AUTH_TYPE_OPTIONS, AuthTypeFields } from "./AuthTypeFields";
 
 interface ConnectionFormModalProps {
   connection?: Connection;
@@ -19,7 +20,12 @@ const TYPE_LABELS: Record<ConnectionType, string> = {
   postgres: "PostgreSQL",
   mysql: "MySQL",
   rest: "REST API",
+  graphql: "GraphQL API",
 };
+
+function str(v: unknown): string {
+  return typeof v === "string" ? v : v == null ? "" : String(v);
+}
 
 export function ConnectionFormModal({ connection, onClose, onSubmit }: ConnectionFormModalProps) {
   const isEdit = Boolean(connection);
@@ -27,24 +33,29 @@ export function ConnectionFormModal({ connection, onClose, onSubmit }: Connectio
   const [name, setName] = useState(connection?.name ?? "");
   const [description, setDescription] = useState(connection?.description ?? "");
 
-  const cfg = (connection?.config ?? {}) as Record<string, string>;
-  const [host, setHost] = useState(cfg.host ?? "");
-  const [port, setPort] = useState(cfg.port ?? (type === "mysql" ? "3306" : "5432"));
-  const [database, setDatabase] = useState(cfg.database ?? "");
-  const [dbUser, setDbUser] = useState(cfg.user ?? "");
-  const [sslMode, setSslMode] = useState(cfg.sslMode ?? "prefer");
+  const initialCfg = (connection?.config ?? {}) as Record<string, unknown>;
+  const [host, setHost] = useState(str(initialCfg.host));
+  const [port, setPort] = useState(str(initialCfg.port) || (type === "mysql" ? "3306" : "5432"));
+  const [database, setDatabase] = useState(str(initialCfg.database));
+  const [dbUser, setDbUser] = useState(str(initialCfg.user));
+  const [sslMode, setSslMode] = useState(str(initialCfg.sslMode) || "prefer");
   const [password, setPassword] = useState("");
 
-  const [baseUrl, setBaseUrl] = useState(cfg.baseUrl ?? "");
-  const [authType, setAuthType] = useState(cfg.authType ?? "none");
-  const [apiKeyHeader, setApiKeyHeader] = useState(cfg.apiKeyHeader ?? "X-Api-Key");
-  const [apiKey, setApiKey] = useState("");
-  const [bearerToken, setBearerToken] = useState("");
-  const [basicUser, setBasicUser] = useState("");
-  const [basicPassword, setBasicPassword] = useState("");
+  const [baseUrl, setBaseUrl] = useState(str(initialCfg.baseUrl));
+  const [endpoint, setEndpoint] = useState(str(initialCfg.endpoint));
+  const [authType, setAuthType] = useState<AuthType>((initialCfg.authType as AuthType) ?? "none");
+  const [httpConfig, setHttpConfig] = useState<Record<string, unknown>>(initialCfg);
+  const [secret, setSecret] = useState<Record<string, string>>({});
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  function patchConfig(patch: Record<string, unknown>) {
+    setHttpConfig((prev) => ({ ...prev, ...patch }));
+  }
+  function patchSecret(patch: Record<string, string>) {
+    setSecret((prev) => ({ ...prev, ...patch }));
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -52,28 +63,22 @@ export function ConnectionFormModal({ connection, onClose, onSubmit }: Connectio
     setError(null);
     try {
       if (type === "postgres" || type === "mysql") {
-        const secret: Record<string, string> = {};
-        if (password) secret.password = password;
+        const dbSecret: Record<string, string> = {};
+        if (password) dbSecret.password = password;
         await onSubmit({
           name,
           type,
           description,
           config: { host, port: Number(port), database, user: dbUser, ...(type === "postgres" ? { sslMode } : {}) },
-          secret: Object.keys(secret).length > 0 ? secret : undefined,
+          secret: Object.keys(dbSecret).length > 0 ? dbSecret : undefined,
         });
       } else {
-        const secret: Record<string, string> = {};
-        if (authType === "apiKey" && apiKey) secret.apiKey = apiKey;
-        if (authType === "bearer" && bearerToken) secret.bearerToken = bearerToken;
-        if (authType === "basic" && (basicUser || basicPassword)) {
-          secret.username = basicUser;
-          secret.password = basicPassword;
-        }
+        const config = { ...httpConfig, authType, ...(type === "rest" ? { baseUrl } : { endpoint }) };
         await onSubmit({
           name,
           type,
           description,
-          config: { baseUrl, authType, ...(authType === "apiKey" ? { apiKeyHeader } : {}) },
+          config,
           secret: Object.keys(secret).length > 0 ? secret : undefined,
         });
       }
@@ -85,11 +90,13 @@ export function ConnectionFormModal({ connection, onClose, onSubmit }: Connectio
     }
   }
 
+  const isHTTP = type === "rest" || type === "graphql";
+
   return (
     <Modal
       title={isEdit ? "Edit connection" : "New connection"}
       onClose={onClose}
-      width={520}
+      width={560}
       footer={
         <>
           <button className="btn" type="button" onClick={onClose}>
@@ -180,65 +187,38 @@ export function ConnectionFormModal({ connection, onClose, onSubmit }: Connectio
           </>
         )}
 
-        {type === "rest" && (
+        {isHTTP && (
           <>
             <div className="field">
-              <label htmlFor="conn-baseurl">Base URL</label>
+              <label htmlFor="conn-url">{type === "rest" ? "Base URL" : "GraphQL endpoint"}</label>
               <input
-                id="conn-baseurl"
+                id="conn-url"
                 className="input"
                 type="url"
                 required
-                placeholder="https://api.example.com"
-                value={baseUrl}
-                onChange={(e) => setBaseUrl(e.target.value)}
+                placeholder={type === "rest" ? "https://api.example.com" : "https://api.example.com/graphql"}
+                value={type === "rest" ? baseUrl : endpoint}
+                onChange={(e) => (type === "rest" ? setBaseUrl(e.target.value) : setEndpoint(e.target.value))}
               />
             </div>
             <div className="field">
               <label htmlFor="conn-authtype">Authentication</label>
-              <select id="conn-authtype" className="select" value={authType} onChange={(e) => setAuthType(e.target.value)}>
-                <option value="none">None</option>
-                <option value="bearer">Bearer token</option>
-                <option value="apiKey">API key header</option>
-                <option value="basic">Basic auth</option>
+              <select id="conn-authtype" className="select" value={authType} onChange={(e) => setAuthType(e.target.value as AuthType)}>
+                {AUTH_TYPE_OPTIONS.map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
               </select>
             </div>
-            {authType === "bearer" && (
-              <div className="field">
-                <label htmlFor="conn-bearer">Bearer token {isEdit && <span className="field-hint">(leave blank to keep)</span>}</label>
-                <input id="conn-bearer" className="input" type="password" value={bearerToken} onChange={(e) => setBearerToken(e.target.value)} />
-              </div>
-            )}
-            {authType === "apiKey" && (
-              <>
-                <div className="field">
-                  <label htmlFor="conn-apikeyheader">Header name</label>
-                  <input id="conn-apikeyheader" className="input" value={apiKeyHeader} onChange={(e) => setApiKeyHeader(e.target.value)} />
-                </div>
-                <div className="field">
-                  <label htmlFor="conn-apikey">API key {isEdit && <span className="field-hint">(leave blank to keep)</span>}</label>
-                  <input id="conn-apikey" className="input" type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
-                </div>
-              </>
-            )}
-            {authType === "basic" && (
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <div className="field">
-                  <label htmlFor="conn-basicuser">Username</label>
-                  <input id="conn-basicuser" className="input" value={basicUser} onChange={(e) => setBasicUser(e.target.value)} />
-                </div>
-                <div className="field">
-                  <label htmlFor="conn-basicpassword">Password</label>
-                  <input
-                    id="conn-basicpassword"
-                    className="input"
-                    type="password"
-                    value={basicPassword}
-                    onChange={(e) => setBasicPassword(e.target.value)}
-                  />
-                </div>
-              </div>
-            )}
+            <AuthTypeFields
+              authType={authType}
+              config={httpConfig}
+              onConfigChange={patchConfig}
+              secret={secret}
+              onSecretChange={patchSecret}
+              isEdit={isEdit}
+            />
           </>
         )}
       </form>

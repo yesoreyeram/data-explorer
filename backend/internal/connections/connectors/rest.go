@@ -1,7 +1,6 @@
 package connectors
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,44 +11,58 @@ import (
 	"time"
 
 	"github.com/yesoreyeram/data-explorer/backend/internal/connections"
+	"github.com/yesoreyeram/data-explorer/backend/pkg/dataframe"
+	"github.com/yesoreyeram/data-explorer/backend/pkg/httpclient"
 )
 
+// RESTConfig is the non-secret configuration for a REST connection. Auth is
+// configured via the embedded AuthConfig - see httpauth.go for the full
+// matrix of supported schemes and which secret keys each expects.
 type RESTConfig struct {
-	BaseURL  string `json:"baseUrl"`
-	AuthType string `json:"authType"` // none | basic | bearer | apiKey
-	APIKeyHeader string `json:"apiKeyHeader,omitempty"`
+	BaseURL string `json:"baseUrl"`
+	AuthConfig
 }
 
-type REST struct {
-	client *http.Client
-}
+type REST struct{}
 
-func NewREST() *REST {
-	return &REST{client: &http.Client{Timeout: 30 * time.Second}}
-}
+func NewREST() *REST { return &REST{} }
 
-func (r *REST) buildRequest(ctx context.Context, cfgJSON json.RawMessage, secret map[string]string, spec connections.QuerySpec) (*http.Request, error) {
+func (r *REST) parseConfig(cfgJSON json.RawMessage) (RESTConfig, error) {
 	var cfg RESTConfig
 	if err := json.Unmarshal(cfgJSON, &cfg); err != nil {
-		return nil, fmt.Errorf("invalid rest config: %w", err)
+		return RESTConfig{}, fmt.Errorf("invalid rest config: %w", err)
 	}
 	if cfg.BaseURL == "" {
-		return nil, fmt.Errorf("baseUrl is required")
+		return RESTConfig{}, fmt.Errorf("baseUrl is required")
 	}
+	base, err := url.Parse(cfg.BaseURL)
+	if err != nil || (base.Scheme != "http" && base.Scheme != "https") {
+		return RESTConfig{}, fmt.Errorf("baseUrl must be a valid http(s) URL")
+	}
+	return cfg, nil
+}
 
+func (r *REST) client(ctx context.Context, cfg RESTConfig, secret map[string]string) (*httpclient.Client, error) {
+	auth, err := buildAuthenticator(ctx, cfg.AuthConfig, secret)
+	if err != nil {
+		return nil, fmt.Errorf("configure authentication: %w", err)
+	}
+	return httpclient.New(httpclient.Config{
+		Timeout: 30 * time.Second,
+		Auth:    auth,
+		Retry:   httpclient.DefaultRetryPolicy,
+	}), nil
+}
+
+func (r *REST) buildRequest(ctx context.Context, cfg RESTConfig, spec connections.QuerySpec) (*http.Request, error) {
 	base, err := url.Parse(cfg.BaseURL)
 	if err != nil {
-		return nil, fmt.Errorf("invalid baseUrl: %w", err)
+		return nil, err
 	}
-	if base.Scheme != "https" && base.Scheme != "http" {
-		return nil, fmt.Errorf("baseUrl must be http(s)")
-	}
-
 	target, err := base.Parse(strings.TrimPrefix(spec.Path, "/"))
 	if err != nil {
 		return nil, fmt.Errorf("invalid path: %w", err)
 	}
-
 	if len(spec.Query) > 0 {
 		q := target.Query()
 		for k, v := range spec.Query {
@@ -65,126 +78,124 @@ func (r *REST) buildRequest(ctx context.Context, cfgJSON json.RawMessage, secret
 
 	var body io.Reader
 	if len(spec.Body) > 0 {
-		body = bytes.NewReader(spec.Body)
+		body = strings.NewReader(string(spec.Body))
 	}
 
 	req, err := http.NewRequestWithContext(ctx, strings.ToUpper(method), target.String(), body)
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
-	if body != nil {
+	if len(spec.Body) > 0 {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("Accept", "application/json")
 	for k, v := range spec.Headers {
 		req.Header.Set(k, v)
 	}
-
-	switch cfg.AuthType {
-	case "basic":
-		req.SetBasicAuth(secret["username"], secret["password"])
-	case "bearer":
-		req.Header.Set("Authorization", "Bearer "+secret["bearerToken"])
-	case "apiKey":
-		header := cfg.APIKeyHeader
-		if header == "" {
-			header = "X-Api-Key"
-		}
-		req.Header.Set(header, secret["apiKey"])
-	}
-
 	return req, nil
 }
 
 func (r *REST) Test(ctx context.Context, cfgJSON json.RawMessage, secret map[string]string) error {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	req, err := r.buildRequest(ctx, cfgJSON, secret, connections.QuerySpec{Method: http.MethodGet})
+	cfg, err := r.parseConfig(cfgJSON)
 	if err != nil {
 		return err
 	}
-	resp, err := r.client.Do(req)
+	client, err := r.client(ctx, cfg, secret)
+	if err != nil {
+		return err
+	}
+
+	req, err := r.buildRequest(ctx, cfg, connections.QuerySpec{Method: http.MethodGet})
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(ctx, req)
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
 	if resp.StatusCode >= 500 {
 		return fmt.Errorf("upstream returned %d", resp.StatusCode)
 	}
 	return nil
 }
 
-func (r *REST) Execute(ctx context.Context, cfgJSON json.RawMessage, secret map[string]string, spec connections.QuerySpec) (connections.QueryResult, error) {
-	req, err := r.buildRequest(ctx, cfgJSON, secret, spec)
+func (r *REST) Execute(ctx context.Context, cfgJSON json.RawMessage, secret map[string]string, spec connections.QuerySpec) (*dataframe.Frame, error) {
+	start := time.Now()
+	cfg, err := r.parseConfig(cfgJSON)
 	if err != nil {
-		return connections.QueryResult{}, err
+		return nil, err
 	}
-
-	resp, err := r.client.Do(req)
+	client, err := r.client(ctx, cfg, secret)
 	if err != nil {
-		return connections.QueryResult{}, fmt.Errorf("request failed: %w", err)
+		return nil, err
 	}
-	defer resp.Body.Close()
-
-	const maxBody = 25 * 1024 * 1024 // 25MB response cap
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
+	req, err := r.buildRequest(ctx, cfg, spec)
 	if err != nil {
-		return connections.QueryResult{}, fmt.Errorf("read response: %w", err)
+		return nil, err
 	}
 
-	if resp.StatusCode >= 400 {
-		return connections.QueryResult{}, fmt.Errorf("upstream returned status %d: %s", resp.StatusCode, truncateForError(raw))
-	}
+	limit := connections.EffectiveRowLimit(spec.RowLimit)
+	frame := dataframe.New(nil)
+	truncated := false
+	warnings := []string(nil)
 
-	var decoded any
-	if len(raw) > 0 {
-		if err := json.Unmarshal(raw, &decoded); err != nil {
-			return connections.QueryResult{}, fmt.Errorf("response is not valid JSON: %w", err)
+	appendPage := func(decoded any, itemsPath string) {
+		items := extractItems(decoded, itemsPath)
+		for _, item := range items {
+			if frame.NumRows() >= limit {
+				truncated = true
+				return
+			}
+			frame.AppendRow(toRowMap(item))
 		}
 	}
 
-	return toQueryResult(decoded, connections.EffectiveRowLimit(spec.RowLimit)), nil
-}
-
-// toQueryResult normalizes an arbitrary JSON payload (object, array of
-// objects, or scalar) into the tabular QueryResult shape used everywhere
-// else in the pipeline, so downstream nodes (JSONata transform, table view)
-// don't need to special-case REST responses.
-func toQueryResult(decoded any, limit int) connections.QueryResult {
-	result := connections.QueryResult{Rows: []map[string]any{}}
-
-	var items []any
-	switch v := decoded.(type) {
-	case []any:
-		items = v
-	case map[string]any:
-		items = []any{v}
-	default:
-		items = []any{map[string]any{"value": v}}
-	}
-
-	colSeen := map[string]bool{}
-	for _, item := range items {
-		if result.RowCount >= limit {
-			result.Truncated = true
-			break
+	if spec.Pagination != nil && spec.Pagination.Strategy != "" && spec.Pagination.Strategy != "none" {
+		paginator, err := buildRESTPaginator(spec.Pagination)
+		if err != nil {
+			return nil, err
 		}
-		obj, ok := item.(map[string]any)
-		if !ok {
-			obj = map[string]any{"value": item}
+		result, err := client.DoPaginated(ctx, req, paginator, maxPagesOf(spec.Pagination))
+		if err != nil {
+			return nil, fmt.Errorf("paginated request failed: %w", err)
 		}
-		for k := range obj {
-			if !colSeen[k] {
-				colSeen[k] = true
-				result.Columns = append(result.Columns, k)
+		if result.Truncated {
+			warnings = append(warnings, fmt.Sprintf("pagination stopped after the %d-page limit; more pages may exist", result.PageCount))
+		}
+		for _, page := range result.Pages {
+			if page.Response.IsError() {
+				return nil, fmt.Errorf("upstream returned status %d: %s", page.Response.StatusCode, truncateForError(page.Response.Body))
+			}
+			appendPage(page.Data, spec.Pagination.ItemsPath)
+			if truncated {
+				break
 			}
 		}
-		result.Rows = append(result.Rows, obj)
-		result.RowCount++
+	} else {
+		resp, err := client.Do(ctx, req)
+		if err != nil {
+			return nil, fmt.Errorf("request failed: %w", err)
+		}
+		if resp.IsError() {
+			return nil, fmt.Errorf("upstream returned status %d: %s", resp.StatusCode, truncateForError(resp.Body))
+		}
+		var decoded any
+		if len(resp.Body) > 0 {
+			if err := json.Unmarshal(resp.Body, &decoded); err != nil {
+				return nil, fmt.Errorf("response is not valid JSON: %w", err)
+			}
+		}
+		appendPage(decoded, "")
 	}
 
-	return result
+	frame.SetMeta(dataframe.Metadata{
+		SourceType:  "rest",
+		GeneratedAt: start,
+		DurationMs:  time.Since(start).Milliseconds(),
+		Truncated:   truncated,
+		Warnings:    warnings,
+	})
+	return frame, nil
 }
 
 func truncateForError(b []byte) string {

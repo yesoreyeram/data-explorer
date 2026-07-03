@@ -7,16 +7,25 @@ import (
 
 	"github.com/yesoreyeram/data-explorer/backend/internal/domain"
 	"github.com/yesoreyeram/data-explorer/backend/internal/platform/crypto"
+	"github.com/yesoreyeram/data-explorer/backend/pkg/dataframe"
 )
+
+var ErrRateLimited = fmt.Errorf("this connection is being called too frequently; slow down")
 
 type Service struct {
 	repo      *Repository
 	encryptor *crypto.Encryptor
 	registry  *Registry
+	limiter   *perConnectionLimiter
 }
 
 func NewService(repo *Repository, encryptor *crypto.Encryptor, registry *Registry) *Service {
-	return &Service{repo: repo, encryptor: encryptor, registry: registry}
+	return &Service{
+		repo:      repo,
+		encryptor: encryptor,
+		registry:  registry,
+		limiter:   newPerConnectionLimiter(DefaultConnectionRateLimit, DefaultConnectionRateBurst),
+	}
 }
 
 type CreateInput struct {
@@ -83,6 +92,10 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 // Test dials out to the connection's underlying system to verify
 // connectivity/credentials and records the result on the connection record.
 func (s *Service) Test(ctx context.Context, id string) error {
+	if !s.limiter.Allow(id) {
+		return ErrRateLimited
+	}
+
 	conn, err := s.repo.Get(ctx, id)
 	if err != nil {
 		return err
@@ -107,23 +120,45 @@ func (s *Service) Test(ctx context.Context, id string) error {
 	return testErr
 }
 
-// Query executes a read query through the connection's connector. This is
-// the single choke point used by both the ad-hoc "run query" API and the
-// workflow source node executor.
-func (s *Service) Query(ctx context.Context, id string, spec QuerySpec) (QueryResult, error) {
+// Query executes a read query through the connection's connector and
+// returns a dataframe.Frame - the single choke point used by both the
+// ad-hoc "run query" API and the workflow source node executor. The
+// connector itself doesn't know the connection's ID/display name, so
+// Query stamps that provenance onto the frame's metadata here.
+func (s *Service) Query(ctx context.Context, id string, spec QuerySpec) (*dataframe.Frame, error) {
+	if !s.limiter.Allow(id) {
+		return nil, ErrRateLimited
+	}
+
 	conn, err := s.repo.Get(ctx, id)
 	if err != nil {
-		return QueryResult{}, err
+		return nil, err
 	}
 	connector, err := s.registry.Get(string(conn.Type))
 	if err != nil {
-		return QueryResult{}, err
+		return nil, err
 	}
 	secret, err := s.decryptSecretFor(ctx, id)
 	if err != nil {
-		return QueryResult{}, err
+		return nil, err
 	}
-	return connector.Execute(ctx, conn.Config, secret, spec)
+
+	frame, err := connector.Execute(ctx, conn.Config, secret, spec)
+	if err != nil {
+		return nil, err
+	}
+
+	frame.Meta.SourceType = string(conn.Type)
+	frame.Meta.SourceID = conn.ID
+	frame.Meta.Name = conn.Name
+
+	// Guardrail applied uniformly regardless of which connector produced the
+	// frame: a single oversized cell (a REST blob field, a Postgres text
+	// column with an enormous value, ...) shouldn't dominate memory/response
+	// size just because the row count itself was within limits.
+	frame.TruncateCells(dataframe.DefaultMaxCellBytes)
+
+	return frame, nil
 }
 
 func (s *Service) encryptSecret(values map[string]string) (string, error) {

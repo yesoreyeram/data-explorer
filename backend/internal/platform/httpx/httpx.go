@@ -4,10 +4,19 @@
 package httpx
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 )
+
+// MaxRequestBodyBytes bounds every JSON request body decoded through
+// DecodeJSON, protecting the server from a malicious or buggy client
+// exhausting memory on a single request.
+const MaxRequestBodyBytes = 1 << 20 // 1MB
+
+var ErrPayloadTooLarge = errors.New("httpx: request body exceeds the maximum allowed size")
 
 type ErrorBody struct {
 	Error struct {
@@ -31,10 +40,32 @@ func WriteError(w http.ResponseWriter, status int, code, message string) {
 	WriteJSON(w, status, body)
 }
 
-// DecodeJSON reads and decodes a JSON body with a size cap (1MB) to prevent
-// a malicious or buggy client from exhausting server memory on one request.
+// WriteDecodeError maps a DecodeJSON error to the appropriate response: 413
+// for a request that hit the size guardrail, 400 for anything else
+// (malformed JSON, unknown fields, ...).
+func WriteDecodeError(w http.ResponseWriter, err error) {
+	if errors.Is(err, ErrPayloadTooLarge) {
+		WriteError(w, http.StatusRequestEntityTooLarge, "payload_too_large", "request body exceeds the maximum allowed size")
+		return
+	}
+	WriteError(w, http.StatusBadRequest, "invalid_request", "malformed request body")
+}
+
+// DecodeJSON reads and decodes a JSON body with a size cap (MaxRequestBodyBytes)
+// to prevent a malicious or buggy client from exhausting server memory on
+// one request. A body at or over the cap fails fast with ErrPayloadTooLarge
+// rather than a confusing "unexpected EOF" from a silently truncated decode.
 func DecodeJSON(r *http.Request, v any) error {
-	dec := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
+	limited := io.LimitReader(r.Body, MaxRequestBodyBytes+1)
+	body, err := io.ReadAll(limited)
+	if err != nil {
+		return err
+	}
+	if len(body) > MaxRequestBodyBytes {
+		return ErrPayloadTooLarge
+	}
+
+	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
 	return dec.Decode(v)
 }

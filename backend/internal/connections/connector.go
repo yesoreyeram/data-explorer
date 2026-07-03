@@ -1,18 +1,68 @@
 // Package connections manages reusable, credentialed links to external data
-// sources (databases, REST APIs, ...). It owns the only code path in the
-// system allowed to decrypt connection secrets, and it does so strictly
-// in-memory, for the duration of a single dial-out.
+// sources (databases, REST/GraphQL APIs, ...). It owns the only code path in
+// the system allowed to decrypt connection secrets, and it does so strictly
+// in-memory, for the duration of a single dial-out. Every connector returns
+// a dataframe.Frame - the same typed, metadata-rich tabular contract used
+// throughout the workflow engine - so a source node's output composes with
+// every other node regardless of which system produced it.
 package connections
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
+
+	"github.com/yesoreyeram/data-explorer/backend/pkg/dataframe"
 )
 
+// PaginationSpec configures how a connector should walk a multi-page result
+// set. Which fields apply depends on Strategy; see
+// backend/pkg/httpclient/pagination*.go for the underlying implementations.
+type PaginationSpec struct {
+	// Strategy: "" or "none" (single request), "offset", "page", "cursor",
+	// "linkHeader", or "graphqlRelay".
+	Strategy string `json:"strategy,omitempty"`
+
+	// ItemsPath locates the array of rows within each page's JSON body for
+	// the offset/page/cursor/linkHeader strategies, e.g. "data.items".
+	// Empty means the response body itself is the array.
+	ItemsPath string `json:"itemsPath,omitempty"`
+
+	OffsetParam string `json:"offsetParam,omitempty"`
+	LimitParam  string `json:"limitParam,omitempty"`
+
+	PageParam     string `json:"pageParam,omitempty"`
+	PageSizeParam string `json:"pageSizeParam,omitempty"`
+
+	CursorParam string `json:"cursorParam,omitempty"`
+	CursorPath  string `json:"cursorPath,omitempty"`
+
+	PageSize int `json:"pageSize,omitempty"`
+
+	// GraphQLDataPath/CursorVariable/PageSizeVariable configure the
+	// "graphqlRelay" strategy - see GraphQLSpec for the query itself.
+	GraphQLCursorVariable   string `json:"graphqlCursorVariable,omitempty"`
+	GraphQLPageSizeVariable string `json:"graphqlPageSizeVariable,omitempty"`
+
+	// MaxPages guardrails how many pages are fetched; see
+	// httpclient.DefaultMaxPages/HardMaxPages for the effective bounds.
+	MaxPages int `json:"maxPages,omitempty"`
+}
+
+// GraphQLSpec is the query payload for a "graphql" connection.
+type GraphQLSpec struct {
+	Query         string         `json:"query"`
+	Variables     map[string]any `json:"variables,omitempty"`
+	OperationName string         `json:"operationName,omitempty"`
+	// DataPath locates the connection field to read rows from, e.g.
+	// "data.search" (relay edges/node convention) or "data.items" (a plain
+	// array). See connectors/graphql.go for how each shape is unwrapped.
+	DataPath string `json:"dataPath,omitempty"`
+}
+
 // QuerySpec is a connector-agnostic request. Which fields apply depends on
-// the connection type: SQL connectors read SQL/Params, the REST connector
-// reads Method/Path/Query/Body.
+// the connection type: SQL connectors read SQL/Params, REST reads
+// Method/Path/Query/Body(+Pagination), GraphQL reads GraphQL(+Pagination).
 type QuerySpec struct {
 	SQL      string            `json:"sql,omitempty"`
 	Params   []any             `json:"params,omitempty"`
@@ -22,13 +72,9 @@ type QuerySpec struct {
 	Headers  map[string]string `json:"headers,omitempty"`
 	Body     json.RawMessage   `json:"body,omitempty"`
 	RowLimit int               `json:"rowLimit,omitempty"`
-}
 
-type QueryResult struct {
-	Columns  []string         `json:"columns"`
-	Rows     []map[string]any `json:"rows"`
-	RowCount int              `json:"rowCount"`
-	Truncated bool            `json:"truncated"`
+	Pagination *PaginationSpec `json:"pagination,omitempty"`
+	GraphQL    *GraphQLSpec    `json:"graphql,omitempty"`
 }
 
 // MaxRowLimit is a hard ceiling applied regardless of what a caller requests,
@@ -52,13 +98,17 @@ func EffectiveRowLimit(requested int) int {
 var ErrUnsupportedType = errors.New("unsupported connection type")
 
 // Connector is implemented once per external system type (Postgres, MySQL,
-// REST, ...). Secrets are passed in decrypted, in-memory, and must never be
-// logged or echoed back in results/errors.
+// REST, GraphQL, ...). Secrets are passed in decrypted, in-memory, and must
+// never be logged or echoed back in results/errors. Execute's returned
+// Frame should leave Meta.SourceType/SourceID/Name unset - Service fills
+// those in from the Connection record, since the connector itself doesn't
+// know its own connection's ID or display name.
 type Connector interface {
 	// Test verifies connectivity/credentials without returning data.
 	Test(ctx context.Context, config json.RawMessage, secret map[string]string) error
-	// Execute runs a read query against the source and returns a bounded result set.
-	Execute(ctx context.Context, config json.RawMessage, secret map[string]string, spec QuerySpec) (QueryResult, error)
+	// Execute runs a read query against the source and returns a bounded,
+	// typed result set.
+	Execute(ctx context.Context, config json.RawMessage, secret map[string]string, spec QuerySpec) (*dataframe.Frame, error)
 }
 
 type Registry struct {

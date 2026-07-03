@@ -59,9 +59,26 @@ func ParseDefinition(raw json.RawMessage) (Definition, error) {
 	return def, nil
 }
 
+// MaxNodes and MaxEdges guardrail how large a single workflow definition may
+// be: generous enough for any legitimate pipeline, low enough that a
+// pathological definition (crafted or accidental, e.g. a copy-paste loop in
+// a client) can't blow up validation/execution time or storage.
+const (
+	MaxNodes = 200
+	MaxEdges = 500
+)
+
 // Validate checks structural integrity: unique node ids, edges referencing
-// real nodes, known node types, and no cycles (the engine requires a DAG).
+// real nodes, known node types, no cycles (the engine requires a DAG), and
+// the size guardrails above.
 func (d Definition) Validate() error {
+	if len(d.Nodes) > MaxNodes {
+		return fmt.Errorf("workflow has %d nodes, exceeding the limit of %d", len(d.Nodes), MaxNodes)
+	}
+	if len(d.Edges) > MaxEdges {
+		return fmt.Errorf("workflow has %d edges, exceeding the limit of %d", len(d.Edges), MaxEdges)
+	}
+
 	ids := map[string]bool{}
 	for _, n := range d.Nodes {
 		if n.ID == "" {

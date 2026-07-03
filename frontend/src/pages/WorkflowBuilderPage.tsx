@@ -18,8 +18,8 @@ import "reactflow/dist/style.css";
 
 import { extractErrorMessage } from "../api/client";
 import { executeWorkflow, getWorkflow, listWorkflowExecutions, updateWorkflow } from "../api/workflows";
-import type { NodeType, QueryResult, WorkflowDefinition, WorkflowEdge, WorkflowNode, WorkflowStatus } from "../api/types";
-import { DataTable } from "../components/DataTable";
+import type { NodeType, DataFrame, WorkflowDefinition, WorkflowEdge, WorkflowNode, WorkflowStatus } from "../api/types";
+import { DataFrameView } from "../components/DataFrameView";
 import { StatusBadge } from "../components/StatusBadge";
 import { PermissionGate } from "../components/PermissionGate";
 import { PERMISSIONS } from "../lib/permissions";
@@ -104,7 +104,7 @@ export function WorkflowBuilderPage() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [status, setStatus] = useState<WorkflowStatus>("draft");
-  const [runResult, setRunResult] = useState<QueryResult | null>(null);
+  const [runResult, setRunResult] = useState<DataFrame | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -357,12 +357,9 @@ export function WorkflowBuilderPage() {
         <div className="card" style={{ marginTop: 16 }}>
           <div className="card-header">
             <h3>Run output</h3>
-            <span className="field-hint">
-              {runResult.rowCount} row(s){runResult.truncated ? " (truncated)" : ""}
-            </span>
           </div>
           <div className="card-body">
-            <DataTable columns={runResult.columns} rows={runResult.rows} />
+            <DataFrameView frame={runResult} />
           </div>
         </div>
       )}

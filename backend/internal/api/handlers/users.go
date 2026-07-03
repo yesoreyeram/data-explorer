@@ -46,7 +46,7 @@ func (h *Handlers) SetUserStatus(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	var req setStatusRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "malformed request body")
+		httpx.WriteDecodeError(w, err)
 		return
 	}
 	if req.Status != domain.UserStatusActive && req.Status != domain.UserStatusSuspended {
@@ -80,7 +80,7 @@ func (h *Handlers) SetUserRoles(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	var req setUserRolesRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "malformed request body")
+		httpx.WriteDecodeError(w, err)
 		return
 	}
 

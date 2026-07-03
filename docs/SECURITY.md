@@ -80,13 +80,59 @@ a public issue.
   through the driver's parameter binding (`pgx`/`database/sql`), never
   string-concatenated into SQL.
 
-## REST connector
+## Outbound HTTP (REST/GraphQL connectors and `pkg/httpclient`)
 
-- `baseUrl` must be `http`/`https`; secrets are attached per the connection's
-  configured `authType` (`bearer`/`apiKey`/`basic`) and never exposed to the
-  frontend.
-- Response bodies are capped at 25MB (`io.LimitReader`) to bound memory use
-  against a misbehaving or malicious upstream.
+The REST and GraphQL connectors are built on `backend/pkg/httpclient`, a
+standalone HTTP client library (see `docs/ARCHITECTURE.md`) that centralizes
+every outbound-call guardrail so no connector has to reimplement them:
+
+- `baseUrl`/`endpoint` must be `http`/`https`.
+- **Every response body is capped** (`httpclient.DefaultMaxResponseBytes` =
+  25MB) - the excess is discarded, not buffered, so a malicious or
+  misbehaving upstream can't exhaust memory by streaming an unbounded
+  response.
+- **Redirects are capped** (`MaxRedirects` = 5) to stop a redirect loop
+  (accidental or adversarial) from hanging a request indefinitely.
+- **Retries are bounded and jittered**: up to `RetryPolicy.MaxAttempts`
+  attempts with exponential backoff *and* full jitter (never a fixed
+  interval, which would let many failing clients retry in lockstep and
+  amplify load on a struggling upstream), and the whole sequence is still
+  subject to the client's overall `Timeout`.
+- **Pagination is capped independently of row count**: `MaxPages` (default
+  20, hard ceiling 500 - `httpclient.DefaultMaxPages`/`HardMaxPages`) stops a
+  paginated fetch even if a misconfigured "next page" field never goes
+  empty, in addition to the row-limit cap that already applies per query.
+- Credentials for every auth scheme (Basic, Bearer, API key, JWT, OAuth2,
+  Digest, workload identity federation, Kerberos - see
+  `internal/connections/connectors/httpauth.go`) come exclusively from the
+  connection's encrypted secret map, never from the plaintext `config`, and
+  are attached to the outgoing request only - never logged, never returned
+  by the API.
+- OAuth2 (`golang.org/x/oauth2`) and workload-identity token exchange (RFC
+  8693) tokens are cached in-memory and refreshed just before expiry, so a
+  compromise of the API process at rest never exposes a long-lived token
+  that wasn't already about to be re-minted.
+
+## Guardrails at every layer
+
+Defense in depth in one place - each layer assumes the ones "below" it
+might fail:
+
+| Layer | Guardrail | Where |
+| --- | --- | --- |
+| HTTP request in | 1MB body cap, rejects unknown fields | `httpx.DecodeJSON` |
+| Auth endpoints | stricter per-IP rate limit (credential stuffing) | `api/middleware/ratelimit.go` |
+| All endpoints | general per-IP rate limit | `api/middleware/ratelimit.go` |
+| Per connection | per-connection-ID rate limit (protects the *downstream* system) | `connections.Service` |
+| SQL connectors | read-only statement guard, parameterized queries, statement timeout | `connectors/sqlguard.go`, `connectors/postgres.go` |
+| REST/GraphQL connectors | response size cap, redirect cap, bounded jittered retry | `pkg/httpclient` |
+| Pagination | max pages (any strategy, including GraphQL relay) | `pkg/httpclient/pagination.go` |
+| Query results | row limit (1,000 default / 10,000 hard cap) | `connections.EffectiveRowLimit` |
+| Every dataframe | oversized single-cell truncation | `dataframe.Frame.TruncateCells` (applied centrally in `connections.Service.Query`) |
+| Every workflow node | per-node output row cap (defense against join fan-out) | `workflow.MaxRowsPerNode` |
+| Workflow definitions | max nodes / max edges | `workflow.MaxNodes` / `MaxEdges` |
+| Workflow execution | overall wall-clock timeout (2 min) | `workflow.MaxExecutionDuration` |
+| Sessions | short-lived access tokens, rotating refresh tokens | `internal/auth` |
 
 ## Transport and HTTP hardening
 
@@ -100,8 +146,10 @@ a public issue.
   `/auth/login`, `/auth/register`, and `/auth/refresh` to blunt
   credential-stuffing and brute-force attempts
   (`internal/api/middleware/ratelimit.go`).
-- Request bodies are size-capped (1MB) and decoded with
-  `DisallowUnknownFields`, rejecting unexpected/oversized payloads early.
+- Request bodies are size-capped (1MB, `httpx.MaxRequestBodyBytes`) and
+  decoded with `DisallowUnknownFields`; an oversized body fails fast with a
+  clear `413 payload_too_large` rather than a confusing parse error from a
+  silently truncated read.
 
 ## Audit trail
 
@@ -132,3 +180,13 @@ Being upfront about what this is *not*, yet:
 - **The `EnsureReadOnlySQL` guard is a keyword/prefix check, not a full SQL
   parser.** It is a defense-in-depth layer, not the primary control - always
   use least-privilege, read-only database credentials for connections.
+- **Kerberos ticket acquisition has no explicit timeout wrapper.** Unlike
+  every other auth scheme in `pkg/httpclient`, a KDC that hangs (rather than
+  erroring) during `client.Login()`/`SetSPNEGOHeader` can block that
+  request beyond the connector's usual bounds - `gokrb5` (the underlying
+  pure-Go Kerberos implementation) doesn't accept a context today. Operators
+  using Kerberos should ensure their KDC is reliably reachable from the
+  server.
+- **Per-connection rate limiting is in-memory and per-instance**, the same
+  caveat as the per-IP limiter above: a horizontally-scaled deployment needs
+  a shared limiter to enforce a single global budget per connection.

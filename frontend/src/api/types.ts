@@ -17,8 +17,50 @@ export interface User {
   updatedAt: string;
 }
 
-export type ConnectionType = "postgres" | "mysql" | "rest";
+export type ConnectionType = "postgres" | "mysql" | "rest" | "graphql";
 export type ConnectionStatus = "unverified" | "healthy" | "unhealthy";
+
+// Mirrors backend/internal/connections/connectors.AuthConfig. Which fields
+// apply depends on authType - see the backend struct's field comments for
+// exactly which secret key each type reads.
+export type AuthType =
+  | "none"
+  | "basic"
+  | "bearer"
+  | "apiKey"
+  | "digest"
+  | "oauth2ClientCredentials"
+  | "oauth2RefreshToken"
+  | "jwt"
+  | "workloadIdentity"
+  | "kerberos";
+
+export interface AuthConfig {
+  authType?: AuthType;
+
+  apiKeyHeader?: string;
+  apiKeyLocation?: "header" | "query";
+  apiKeyParam?: string;
+
+  oauth2TokenUrl?: string;
+  oauth2Scopes?: string[];
+
+  jwtAlgorithm?: "HS256" | "RS256";
+  jwtClaims?: Record<string, unknown>;
+  jwtTtlSeconds?: number;
+
+  workloadIdentityTokenEndpoint?: string;
+  workloadIdentityAudience?: string;
+  workloadIdentityScope?: string;
+  workloadIdentitySubjectTokenPath?: string;
+  workloadIdentitySubjectTokenType?: string;
+
+  kerberosRealm?: string;
+  kerberosUsername?: string;
+  kerberosSpn?: string;
+  kerberosKrb5ConfPath?: string;
+  kerberosKeytabPath?: string;
+}
 
 export interface Connection {
   id: string;
@@ -34,6 +76,31 @@ export interface Connection {
   updatedAt: string;
 }
 
+export type PaginationStrategy = "none" | "offset" | "page" | "cursor" | "linkHeader" | "graphqlRelay";
+
+// Mirrors backend/internal/connections.PaginationSpec.
+export interface PaginationSpec {
+  strategy: PaginationStrategy;
+  itemsPath?: string;
+  offsetParam?: string;
+  limitParam?: string;
+  pageParam?: string;
+  pageSizeParam?: string;
+  cursorParam?: string;
+  cursorPath?: string;
+  pageSize?: number;
+  graphqlCursorVariable?: string;
+  graphqlPageSizeVariable?: string;
+  maxPages?: number;
+}
+
+export interface GraphQLSpec {
+  query: string;
+  variables?: Record<string, unknown>;
+  operationName?: string;
+  dataPath?: string;
+}
+
 export interface QuerySpec {
   sql?: string;
   params?: unknown[];
@@ -43,13 +110,42 @@ export interface QuerySpec {
   headers?: Record<string, string>;
   body?: unknown;
   rowLimit?: number;
+  pagination?: PaginationSpec;
+  graphql?: GraphQLSpec;
 }
 
-export interface QueryResult {
-  columns: string[];
-  rows: Record<string, unknown>[];
+// ---- dataframe wire format (mirrors backend/pkg/dataframe.Frame's JSON) ----
+
+export type DataFrameFieldType = "string" | "int64" | "float64" | "bool" | "time" | "json" | "null";
+
+export interface DataFrameField {
+  name: string;
+  type: DataFrameFieldType;
+  nullable: boolean;
+}
+
+export interface DataFrameSchema {
+  fields: DataFrameField[];
+}
+
+export interface DataFrameMeta {
+  name?: string;
+  sourceType?: string;
+  sourceId?: string;
+  lineage?: string[];
+  generatedAt: string;
+  durationMs: number;
   rowCount: number;
+  columnCount: number;
   truncated: boolean;
+  warnings?: string[];
+  extra?: Record<string, unknown>;
+}
+
+export interface DataFrame {
+  schema: DataFrameSchema;
+  rows: Record<string, unknown>[];
+  meta: DataFrameMeta;
 }
 
 export type NodeType = "source" | "transform" | "filter" | "join" | "aggregate" | "output";

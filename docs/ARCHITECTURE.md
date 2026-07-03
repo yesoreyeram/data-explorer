@@ -26,7 +26,7 @@ flowchart LR
     subgraph External["External systems"]
         PG[(PostgreSQL\nsystem of record)]
         DS1[(Customer Postgres/MySQL)]
-        DS2[REST APIs]
+        DS2[REST / GraphQL APIs]
     end
 
     SPA -- HTTPS/JSON --> MW --> H --> SVC
@@ -48,6 +48,9 @@ stops being sufficient.
 backend/
   cmd/server/           entrypoint: wiring, graceful shutdown
   db/migrations/        embedded SQL migrations (applied automatically on boot)
+  pkg/                    standalone libraries - no internal/* imports, usable outside this app
+    dataframe/             pandas-style Frame/Schema/Metadata (see "dataframe" below)
+    httpclient/             HTTP client: pluggable auth + pagination (see "httpclient" below)
   internal/
     config/              env-based configuration, twelve-factor style
     domain/               shared entity structs (User, Connection, Workflow, ...)
@@ -56,13 +59,13 @@ backend/
       crypto/            Argon2id password hashing, AES-256-GCM secret encryption
       dbx/                pgx pool setup
       migrator/           embedded-SQL migration runner
-      httpx/              JSON response/error helpers
+      httpx/              JSON response/error helpers, request size guardrail
     auth/                 registration, login, JWT + refresh token issuance
     rbac/                  Principal type, permission constants, context helpers
     audit/                 append-only audit log writer + query API
-    connections/            connection CRUD, secret encryption, connector interface
-      connectors/           postgres, mysql, rest implementations
-    workflow/                DAG definition, topological execution engine
+    connections/            connection CRUD, secret encryption, connector interface, per-connection rate limit
+      connectors/           postgres, mysql, rest, graphql implementations + shared auth/pagination glue
+    workflow/                DAG definition, topological execution engine, size/row guardrails
       nodes/                  one executor per node type (source/transform/filter/join/aggregate/output)
     observability/          Prometheus metrics registry
     api/
@@ -116,29 +119,115 @@ The cost is that a role change takes effect on next login/refresh, not
 instantly; access tokens are short-lived (15 minutes) by default specifically
 to bound that staleness window.
 
+## dataframe: the tabular data contract
+
+`backend/pkg/dataframe` is a small, standalone, pandas-style tabular data
+library with **zero imports from this module's `internal/*` packages** - it
+doesn't know HTTP, SQL, or workflows exist. Every connector and every
+workflow node speaks this one contract: a `*dataframe.Frame` in, a
+`*dataframe.Frame` out. That's what lets `transform`, `filter`, `join`, and
+`aggregate` compose freely regardless of whether the data originated from a
+Postgres table, a paginated REST endpoint, or another node's output.
+
+A `Frame` is columnar storage (`map[string]any` per column, index-aligned)
+described by a `Schema` (ordered `Field{Name, Type, Nullable}`), plus a
+`Metadata` struct carrying provenance: `SourceType`/`SourceID` (e.g.
+`"postgres"` + a connection ID, or `"node:transform"` + a node ID),
+`Lineage` (the chain of upstream frame names), `GeneratedAt`/`DurationMs`,
+row/column counts, `Truncated`, and free-form `Warnings`. Column types are
+inferred from Go values as rows are appended (`InferType`) and widen
+automatically as new values arrive (`unifyType`: `int64` + `float64` →
+`float64`; anything genuinely incompatible → `json`, never silently
+stringified). The JSON wire format (`{schema, rows, meta}`) is what both the
+ad-hoc "run query" API and every workflow execution response actually
+return - see any `DataFrame` type in `frontend/src/api/types.ts`.
+
+Built-in operations mirror their pandas/SQL equivalents: `Select`, `Rename`,
+`Filter`, `Concat` (schema-unioning), `Join` (inner/left, with automatic
+column-collision prefixing), `GroupBy`+`Agg` (sum/avg/count/min/max), and
+`Describe` (per-column count/null-count/min/max/mean or string length
+bounds). The workflow `join` and `aggregate` nodes
+(`internal/workflow/nodes/{join,aggregate}.go`) are thin config/wiring
+adapters over `dataframe.Join`/`Frame.GroupBy` - the actual algorithms live
+entirely in the standalone package, not duplicated per node.
+
+Two guardrails live at this layer specifically because they're about data
+*integrity* rather than any one caller's business policy (see
+`pkg/dataframe/guardrails.go`): `TruncateCells` clips any single string cell
+over 256KB (applied centrally in `connections.Service.Query`, so it's
+uniform across every connector), and `LimitRows` caps a frame's row count
+and marks `Meta.Truncated` (applied per-node by the workflow engine - see
+below).
+
+## httpclient: the outbound HTTP layer
+
+`backend/pkg/httpclient` is a second standalone package: a guardrailed,
+pluggably-authenticated HTTP client the REST and GraphQL connectors are
+built on. Its `Authenticator` interface covers the full spectrum of schemes
+those APIs actually require:
+
+| Scheme | How | 
+| --- | --- |
+| Basic / Bearer / API key | static header or query param |
+| Digest (RFC 7616) | `RoundTripperAuthenticator`: sends unauthenticated, reads the 401 challenge, resends with a computed response - the one scheme that needs to see a response before it can authenticate |
+| OAuth2 (client credentials / refresh token) | wraps `golang.org/x/oauth2`'s `TokenSource`, which caches and auto-refreshes |
+| JWT (self-signed bearer) | mints and caches a short-lived HS256/RS256 JWT, re-signing shortly before expiry |
+| Workload identity federation | generic RFC 8693 OAuth2 Token Exchange - the standards-based mechanism underlying AWS/GCP/Azure workload identity, so it isn't tied to one cloud SDK |
+| Kerberos / SPNEGO | `github.com/jcmturner/gokrb5` (pure Go, no cgo/system Kerberos needed) |
+
+Credentials for every scheme come from the connection's encrypted secret
+map, never the plaintext `config` - see `internal/connections/connectors/httpauth.go`
+for the mapping and exactly which secret key each scheme reads.
+
+Pagination is a second first-class concern: a `Paginator` interface plus
+five implementations (`OffsetLimitPaginator`, `PagePaginator`,
+`CursorPaginator`, `LinkHeaderPaginator`, `GraphQLRelayPaginator`), driven by
+`Client.DoPaginated`, which owns the `MaxPages` guardrail so every strategy
+gets it for free - a misconfigured "next page" field that never goes empty
+still stops after `DefaultMaxPages` (20, hard ceiling 500). The REST
+connector maps a request's `PaginationSpec` to the right paginator; the
+GraphQL connector only exposes `graphqlRelay` (Relay Cursor Connections:
+`edges { node }` / `pageInfo { hasNextPage, endCursor }`), the de-facto
+standard shape for GraphQL APIs.
+
+Every request also gets the client-level guardrails regardless of auth or
+pagination: a response size cap (25MB), a redirect cap (5), and bounded
+retry with exponential backoff *and full jitter* (never a fixed interval,
+which would let failing clients retry in lockstep) on 429/502/503/504.
+
 ## Connections and secrets
 
 A `Connection` row splits into two parts:
 
 - `config` (JSONB, plaintext) - non-sensitive settings: host, port, database
-  name, base URL, auth type.
+  name, base URL/endpoint, auth type and its non-secret parameters (token
+  URL, scopes, SPN, ...).
 - `secret_encrypted` (text, AES-256-GCM ciphertext) - credentials: password,
-  API key, bearer token.
+  API key, bearer token, OAuth2 client secret, JWT signing key, ...
 
 `internal/connections.Service` is the *only* code path that decrypts a
 secret, and it does so in-memory, immediately before handing it to a
 `Connector.Test`/`Connector.Execute` call. Secrets are never included in any
 API response, never logged, and never persisted anywhere in plaintext.
+`Service.Query` also stamps connection provenance onto the returned frame's
+metadata (the connector itself doesn't know its own connection's ID/name)
+and applies the cross-connector `TruncateCells` guardrail before returning.
 
-Adding a new source type means implementing the small `Connector` interface
-(`internal/connections/connector.go`) and registering it in
-`cmd/server/main.go` - see the developer guide for a walkthrough.
+Four connector types ship today: `postgres`, `mysql` (both via
+`internal/connections/connectors/sqlguard.go`'s read-only statement guard),
+`rest`, and `graphql` (both via `pkg/httpclient`). Adding a new source type
+means implementing the small `Connector` interface
+(`internal/connections/connector.go` - `Test` + `Execute`, returning a
+`*dataframe.Frame`) and registering it in `cmd/server/main.go` - see the
+developer guide for a walkthrough.
 
 ## Workflow execution engine
 
 A workflow's `definition` is a small DAG: `{ nodes: [...], edges: [...] }`,
 authored on the React Flow canvas and stored as-is (JSONB) so the frontend
-round-trips node positions without any server-side transformation.
+round-trips node positions without any server-side transformation. Size is
+guardrailed at validation time (`workflow.MaxNodes` = 200,
+`workflow.MaxEdges` = 500).
 
 ```mermaid
 flowchart LR
@@ -154,11 +243,16 @@ flowchart LR
 2. Executes each node in order, gathering its declared inputs from upstream
    nodes' outputs (most nodes have one input; `join` has two, disambiguated
    by edge `targetHandle: "left" | "right"`).
-3. Every node executor implements the same contract: tabular in
-   (`connections.QueryResult`), tabular out. This is what lets `transform`,
-   `filter`, `join`, and `aggregate` compose freely regardless of where the
-   data originated (SQL table, REST endpoint, or another node's output).
-4. Stops at the first failing node; everything executed up to that point is
+3. Every node executor implements the same contract: `*dataframe.Frame` in,
+   `*dataframe.Frame` out (see "dataframe" above) - this is what lets
+   `transform`, `filter`, `join`, and `aggregate` compose freely regardless
+   of where the data originated (SQL table, REST/GraphQL endpoint, or
+   another node's output).
+4. After each node, caps its output at `workflow.MaxRowsPerNode` (100,000
+   rows) - defense in depth specifically for `join`, whose row count isn't
+   bounded by any connector's row limit and can fan out well past either
+   input's size on a low-selectivity key.
+5. Stops at the first failing node; everything executed up to that point is
    still reported (row counts, durations) so a partially-broken pipeline is
    debuggable from the execution history, not just "it failed."
 
@@ -194,7 +288,14 @@ A standard Vite + React + TypeScript SPA:
 - `src/components/` - shared UI (layout shell, data table, modal, permission
   gate) with a small hand-rolled CSS design system (`src/styles/app.css`)
   built on CSS custom properties, so the whole app re-themes by swapping one
-  attribute (`data-theme` on `<html>`).
+  attribute (`data-theme` on `<html>`). `DataFrameView` renders a dataframe's
+  schema (typed column badges), rows, and metadata (row/col counts, timing,
+  source, lineage, truncation, warnings) as one unit, and `PaginationFields`
+  is the pagination-strategy config form shared by the ad-hoc query modal
+  and the workflow source node.
+- `src/pages/connections/AuthTypeFields.tsx` - the per-auth-type config form
+  (10 schemes) shared by the connection create/edit modal, mirroring
+  `pkg/httpclient`'s `Authenticator` matrix field-for-field.
 - `src/pages/workflow/` - the React Flow canvas, one custom node renderer,
   and a type-specific configuration panel per node type.
 

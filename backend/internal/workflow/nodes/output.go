@@ -3,7 +3,7 @@ package nodes
 import (
 	"context"
 
-	"github.com/yesoreyeram/data-explorer/backend/internal/connections"
+	"github.com/yesoreyeram/data-explorer/backend/pkg/dataframe"
 )
 
 // OutputNode is a terminal pass-through marker: it exists so a workflow can
@@ -12,6 +12,6 @@ import (
 // view, one written elsewhere later).
 type OutputNode struct{}
 
-func (n *OutputNode) Execute(ctx context.Context, deps Deps, in ExecInput) (connections.QueryResult, error) {
+func (n *OutputNode) Execute(ctx context.Context, deps Deps, in ExecInput) (*dataframe.Frame, error) {
 	return in.SingleInput()
 }

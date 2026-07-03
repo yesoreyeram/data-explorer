@@ -7,7 +7,7 @@ import (
 
 	"github.com/blues/jsonata-go"
 
-	"github.com/yesoreyeram/data-explorer/backend/internal/connections"
+	"github.com/yesoreyeram/data-explorer/backend/pkg/dataframe"
 )
 
 // FilterNode keeps only the rows for which a JSONata boolean expression
@@ -18,38 +18,44 @@ type FilterConfig struct {
 	Expression string `json:"expression"`
 }
 
-func (n *FilterNode) Execute(ctx context.Context, deps Deps, in ExecInput) (connections.QueryResult, error) {
+func (n *FilterNode) Execute(ctx context.Context, deps Deps, in ExecInput) (*dataframe.Frame, error) {
 	var cfg FilterConfig
 	if err := json.Unmarshal(in.Config, &cfg); err != nil {
-		return connections.QueryResult{}, fmt.Errorf("invalid filter config: %w", err)
+		return nil, fmt.Errorf("invalid filter config: %w", err)
 	}
 	if cfg.Expression == "" {
-		return connections.QueryResult{}, fmt.Errorf("filter node requires a jsonata expression")
+		return nil, fmt.Errorf("filter node requires a jsonata expression")
 	}
 
 	expr, err := jsonata.Compile(cfg.Expression)
 	if err != nil {
-		return connections.QueryResult{}, fmt.Errorf("invalid jsonata expression: %w", err)
+		return nil, fmt.Errorf("invalid jsonata expression: %w", err)
 	}
 
 	input, err := in.SingleInput()
 	if err != nil {
-		return connections.QueryResult{}, err
+		return nil, err
 	}
 
-	result := connections.QueryResult{Columns: input.Columns, Rows: []map[string]any{}}
-	for i, row := range input.Rows {
-		out, err := expr.Eval(row)
+	var evalErr error
+	out := input.Filter(func(i int, row map[string]any) bool {
+		if evalErr != nil {
+			return false
+		}
+		result, err := expr.Eval(row)
 		if err != nil {
-			return connections.QueryResult{}, fmt.Errorf("evaluate jsonata on row %d: %w", i, err)
+			evalErr = fmt.Errorf("evaluate jsonata on row %d: %w", i, err)
+			return false
 		}
-		if isTruthy(out) {
-			result.Rows = append(result.Rows, row)
-			result.RowCount++
-		}
+		return isTruthy(result)
+	})
+	if evalErr != nil {
+		return nil, evalErr
 	}
 
-	return result, nil
+	out.Meta.SourceType = "node:filter"
+	out.Meta.Lineage = []string{input.Meta.Name}
+	return out, nil
 }
 
 func isTruthy(v any) bool {

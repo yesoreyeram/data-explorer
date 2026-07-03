@@ -43,7 +43,7 @@ type workflowRequest struct {
 func (h *Handlers) CreateWorkflow(w http.ResponseWriter, r *http.Request) {
 	var req workflowRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "malformed request body")
+		httpx.WriteDecodeError(w, err)
 		return
 	}
 	if req.Name == "" {
@@ -67,7 +67,7 @@ func (h *Handlers) UpdateWorkflow(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	var req workflowRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "malformed request body")
+		httpx.WriteDecodeError(w, err)
 		return
 	}
 	status := domain.WorkflowStatus(req.Status)
@@ -107,7 +107,7 @@ func (h *Handlers) ExecuteWorkflow(w http.ResponseWriter, r *http.Request) {
 		outcome = audit.OutcomeFailure
 		meta["error"] = err.Error()
 	} else {
-		meta["rowCount"] = output.RowCount
+		meta["rowCount"] = output.NumRows()
 		meta["durationMs"] = execution.DurationMs
 	}
 	h.recordAudit(r, "workflow.execute", "workflow", id, outcome, meta)

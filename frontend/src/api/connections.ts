@@ -1,5 +1,5 @@
 import { api } from "./client";
-import type { Connection, ConnectionType, QueryResult, QuerySpec } from "./types";
+import type { Connection, ConnectionType, DataFrame, QuerySpec } from "./types";
 
 export interface ConnectionInput {
   name: string;
@@ -38,7 +38,7 @@ export async function testConnection(id: string): Promise<{ healthy: boolean; er
   return res.data;
 }
 
-export async function queryConnection(id: string, spec: QuerySpec): Promise<QueryResult> {
-  const res = await api.post<QueryResult>(`/connections/${id}/query`, spec);
+export async function queryConnection(id: string, spec: QuerySpec): Promise<DataFrame> {
+  const res = await api.post<DataFrame>(`/connections/${id}/query`, spec);
   return res.data;
 }

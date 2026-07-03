@@ -36,9 +36,9 @@ type DBConfig struct {
 
 type AuthConfig struct {
 	// JWTSigningKey signs access & refresh tokens. Must be >= 32 bytes in production.
-	JWTSigningKey       string
-	AccessTokenTTL      time.Duration
-	RefreshTokenTTL     time.Duration
+	JWTSigningKey   string
+	AccessTokenTTL  time.Duration
+	RefreshTokenTTL time.Duration
 	// EncryptionKey is a 32-byte (AES-256) key used to encrypt connection secrets at rest.
 	EncryptionKeyBase64 string
 }

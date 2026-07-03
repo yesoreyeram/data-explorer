@@ -117,28 +117,36 @@ are required.
 
 ## Adding a new connection type (connector)
 
-Connectors implement one interface (`internal/connections/connector.go`):
+Connectors implement one interface (`internal/connections/connector.go`),
+returning the standalone `pkg/dataframe` type - see
+[`ARCHITECTURE.md`](ARCHITECTURE.md#dataframe-the-tabular-data-contract) for
+what a `Frame` actually is:
 
 ```go
 type Connector interface {
     Test(ctx context.Context, config json.RawMessage, secret map[string]string) error
-    Execute(ctx context.Context, config json.RawMessage, secret map[string]string, spec QuerySpec) (QueryResult, error)
+    Execute(ctx context.Context, config json.RawMessage, secret map[string]string, spec QuerySpec) (*dataframe.Frame, error)
 }
 ```
 
 Steps, using the existing connectors as templates
-(`internal/connections/connectors/{postgres,mysql,rest}.go`):
+(`internal/connections/connectors/{postgres,mysql,rest,graphql}.go`):
 
 1. Create `internal/connections/connectors/<name>.go`. Define a config
    struct for the non-secret fields (host, base URL, ...) and read secrets
    out of the `secret map[string]string` passed to you (never log it).
 2. If your source can execute arbitrary read queries, reuse
    `EnsureReadOnlySQL` from `sqlguard.go` for defense-in-depth, or apply an
-   equivalent guard for your query language.
+   equivalent guard for your query language. If it's HTTP-based, build it on
+   `pkg/httpclient` (see the next section) rather than raw `net/http`, to get
+   the auth matrix, pagination, and guardrails for free.
 3. Respect `connections.EffectiveRowLimit(spec.RowLimit)` and set a context
    timeout - every connector must be bounded.
-4. Return results as `connections.QueryResult{Columns, Rows, RowCount,
-   Truncated}` - `Rows` is `[]map[string]any`, one map per row.
+4. Build the result with `dataframe.New(nil)` + `frame.AppendRow(...)` per
+   row (or `dataframe.FromRecords(rows)` if you already have `[]map[string]any`),
+   then `frame.SetMeta(dataframe.Metadata{SourceType: "my-source", ...})`.
+   Leave `SourceID`/`Name` unset - `connections.Service.Query` stamps those
+   from the `Connection` record after your `Execute` returns.
 5. Register it in `cmd/server/main.go`:
    ```go
    connectorRegistry.Register("my-source", connectors.NewMySource())
@@ -147,14 +155,36 @@ Steps, using the existing connectors as templates
    to the frontend's `ConnectionType` union (`frontend/src/api/types.ts`) and
    `ConnectionFormModal.tsx` (add the type-specific fields).
 
+### Adding a new HTTP auth scheme
+
+If you're adding a scheme `pkg/httpclient` doesn't already cover (Basic,
+Bearer, API key, Digest, OAuth2 client-credentials/refresh-token, JWT,
+workload identity federation, Kerberos):
+
+1. Implement `httpclient.Authenticator` (`Authenticate(ctx, *http.Request)
+   error`) in a new `pkg/httpclient/auth_<name>.go`. If the scheme needs to
+   inspect a response before it can authenticate (like Digest's
+   challenge-response), implement `RoundTripperAuthenticator` instead - see
+   `auth_digest.go`.
+2. Add a case to `buildAuthenticator` in
+   `internal/connections/connectors/httpauth.go`, mapping `AuthConfig`
+   fields (non-secret) and named `secret[...]` keys (credentials) to your
+   authenticator's constructor. Document which secret keys it reads in the
+   `AuthConfig` field comments.
+3. On the frontend: add the value to `AuthType` (`frontend/src/api/types.ts`)
+   and a case in `AuthTypeFields.tsx` for its config/secret fields.
+4. Write a `httptest.Server`-backed test in `pkg/httpclient/auth_test.go`
+   (see the existing ones for the pattern - assert on what the server
+   actually received, not just that `Authenticate` didn't error).
+
 ## Adding a new workflow node type
 
-Node executors implement `nodes.Executor`
-(`internal/workflow/nodes/types.go`):
+Node executors implement `nodes.Executor` (`internal/workflow/nodes/types.go`),
+operating entirely on `*dataframe.Frame`:
 
 ```go
 type Executor interface {
-    Execute(ctx context.Context, deps Deps, in ExecInput) (connections.QueryResult, error)
+    Execute(ctx context.Context, deps Deps, in ExecInput) (*dataframe.Frame, error)
 }
 ```
 
@@ -165,7 +195,11 @@ as templates:
    `in.Config` (JSON), and its upstream data from `in.Inputs` -
    `in.SingleInput()` for the common one-input case, or
    `in.Inputs["left"]`/`in.Inputs["right"]`-style named handles if your node
-   needs multiple distinguishable inputs (see `join.go`).
+   needs multiple distinguishable inputs (see `join.go`). Prefer an
+   operation already on `dataframe.Frame` (`Select`, `Rename`, `Filter`,
+   `Join`, `GroupBy`, `Describe`) over writing new row-shuffling logic in the
+   node itself - `join.go`/`aggregate.go` are ~30-line adapters for exactly
+   this reason.
 2. Register it in `nodes.DefaultRegistry()` (`internal/workflow/nodes/types.go`).
 3. Add the type to `workflow.NodeType` (`internal/workflow/definition.go`)
    so it passes `Definition.Validate()`.

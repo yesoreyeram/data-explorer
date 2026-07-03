@@ -10,6 +10,7 @@ import (
 	mysqldriver "github.com/go-sql-driver/mysql"
 
 	"github.com/yesoreyeram/data-explorer/backend/internal/connections"
+	"github.com/yesoreyeram/data-explorer/backend/pkg/dataframe"
 )
 
 type MySQLConfig struct {
@@ -68,14 +69,15 @@ func (m *MySQL) Test(ctx context.Context, cfgJSON json.RawMessage, secret map[st
 	return db.PingContext(ctx)
 }
 
-func (m *MySQL) Execute(ctx context.Context, cfgJSON json.RawMessage, secret map[string]string, spec connections.QuerySpec) (connections.QueryResult, error) {
+func (m *MySQL) Execute(ctx context.Context, cfgJSON json.RawMessage, secret map[string]string, spec connections.QuerySpec) (*dataframe.Frame, error) {
+	start := time.Now()
 	if err := EnsureReadOnlySQL(spec.SQL); err != nil {
-		return connections.QueryResult{}, err
+		return nil, err
 	}
 
 	db, err := m.open(cfgJSON, secret)
 	if err != nil {
-		return connections.QueryResult{}, err
+		return nil, err
 	}
 	defer db.Close()
 
@@ -84,17 +86,17 @@ func (m *MySQL) Execute(ctx context.Context, cfgJSON json.RawMessage, secret map
 
 	rows, err := db.QueryContext(ctx, spec.SQL, spec.Params...)
 	if err != nil {
-		return connections.QueryResult{}, fmt.Errorf("query: %w", err)
+		return nil, fmt.Errorf("query: %w", err)
 	}
 	defer rows.Close()
 
 	columns, err := rows.Columns()
 	if err != nil {
-		return connections.QueryResult{}, fmt.Errorf("read columns: %w", err)
+		return nil, fmt.Errorf("read columns: %w", err)
 	}
 
 	limit := connections.EffectiveRowLimit(spec.RowLimit)
-	result := connections.QueryResult{Columns: columns, Rows: []map[string]any{}}
+	frame := dataframe.New(nil)
 
 	scanDest := make([]any, len(columns))
 	scanBuf := make([]any, len(columns))
@@ -102,26 +104,34 @@ func (m *MySQL) Execute(ctx context.Context, cfgJSON json.RawMessage, secret map
 		scanDest[i] = &scanBuf[i]
 	}
 
+	rowCount := 0
+	truncated := false
 	for rows.Next() {
-		if result.RowCount >= limit {
-			result.Truncated = true
+		if rowCount >= limit {
+			truncated = true
 			break
 		}
 		if err := rows.Scan(scanDest...); err != nil {
-			return connections.QueryResult{}, fmt.Errorf("scan row: %w", err)
+			return nil, fmt.Errorf("scan row: %w", err)
 		}
 		row := make(map[string]any, len(columns))
 		for i, col := range columns {
 			row[col] = normalizeMySQLValue(scanBuf[i])
 		}
-		result.Rows = append(result.Rows, row)
-		result.RowCount++
+		frame.AppendRow(row)
+		rowCount++
 	}
 	if err := rows.Err(); err != nil {
-		return connections.QueryResult{}, fmt.Errorf("read rows: %w", err)
+		return nil, fmt.Errorf("read rows: %w", err)
 	}
 
-	return result, nil
+	frame.SetMeta(dataframe.Metadata{
+		SourceType:  "mysql",
+		GeneratedAt: start,
+		DurationMs:  time.Since(start).Milliseconds(),
+		Truncated:   truncated,
+	})
+	return frame, nil
 }
 
 // normalizeMySQLValue converts driver-returned []byte (common for numeric/

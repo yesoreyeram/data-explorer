@@ -23,7 +23,7 @@ type registerRequest struct {
 func (h *Handlers) Register(w http.ResponseWriter, r *http.Request) {
 	var req registerRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "malformed request body")
+		httpx.WriteDecodeError(w, err)
 		return
 	}
 	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
@@ -61,7 +61,7 @@ type loginResponse struct {
 func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "malformed request body")
+		httpx.WriteDecodeError(w, err)
 		return
 	}
 	req.Email = strings.TrimSpace(strings.ToLower(req.Email))

@@ -7,7 +7,7 @@ import (
 
 	"github.com/blues/jsonata-go"
 
-	"github.com/yesoreyeram/data-explorer/backend/internal/connections"
+	"github.com/yesoreyeram/data-explorer/backend/pkg/dataframe"
 )
 
 // TransformNode reshapes each row of its input using a JSONata expression -
@@ -21,50 +21,41 @@ type TransformConfig struct {
 	Expression string `json:"expression"`
 }
 
-func (n *TransformNode) Execute(ctx context.Context, deps Deps, in ExecInput) (connections.QueryResult, error) {
+func (n *TransformNode) Execute(ctx context.Context, deps Deps, in ExecInput) (*dataframe.Frame, error) {
 	var cfg TransformConfig
 	if err := json.Unmarshal(in.Config, &cfg); err != nil {
-		return connections.QueryResult{}, fmt.Errorf("invalid transform config: %w", err)
+		return nil, fmt.Errorf("invalid transform config: %w", err)
 	}
 	if cfg.Expression == "" {
-		return connections.QueryResult{}, fmt.Errorf("transform node requires a jsonata expression")
+		return nil, fmt.Errorf("transform node requires a jsonata expression")
 	}
 
 	expr, err := jsonata.Compile(cfg.Expression)
 	if err != nil {
-		return connections.QueryResult{}, fmt.Errorf("invalid jsonata expression: %w", err)
+		return nil, fmt.Errorf("invalid jsonata expression: %w", err)
 	}
 
 	input, err := in.SingleInput()
 	if err != nil {
-		return connections.QueryResult{}, err
+		return nil, err
 	}
 
-	result := connections.QueryResult{Rows: []map[string]any{}}
-	colSeen := map[string]bool{}
-
-	for i, row := range input.Rows {
-		out, err := expr.Eval(row)
+	out := dataframe.New(nil)
+	for i, row := range input.Rows() {
+		result, err := expr.Eval(row)
 		if err != nil {
-			return connections.QueryResult{}, fmt.Errorf("evaluate jsonata on row %d: %w", i, err)
+			return nil, fmt.Errorf("evaluate jsonata on row %d: %w", i, err)
 		}
-
-		newRow, err := toRow(out)
+		newRow, err := toRow(result)
 		if err != nil {
-			return connections.QueryResult{}, fmt.Errorf("row %d: %w", i, err)
+			return nil, fmt.Errorf("row %d: %w", i, err)
 		}
-
-		for k := range newRow {
-			if !colSeen[k] {
-				colSeen[k] = true
-				result.Columns = append(result.Columns, k)
-			}
-		}
-		result.Rows = append(result.Rows, newRow)
-		result.RowCount++
+		out.AppendRow(newRow)
 	}
 
-	return result, nil
+	out.Meta.SourceType = "node:transform"
+	out.Meta.Lineage = []string{input.Meta.Name}
+	return out, nil
 }
 
 // toRow coerces a JSONata evaluation result into a row map. Scalars and

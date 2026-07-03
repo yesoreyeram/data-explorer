@@ -16,11 +16,11 @@ import (
 )
 
 type Metrics struct {
-	registry        *prometheus.Registry
-	httpRequests    *prometheus.CounterVec
-	httpDuration    *prometheus.HistogramVec
-	dbQueryDuration *prometheus.HistogramVec
-	workflowRuns    *prometheus.CounterVec
+	registry         *prometheus.Registry
+	httpRequests     *prometheus.CounterVec
+	httpDuration     *prometheus.HistogramVec
+	dbQueryDuration  *prometheus.HistogramVec
+	workflowRuns     *prometheus.CounterVec
 	workflowDuration *prometheus.HistogramVec
 }
 

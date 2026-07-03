@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { listConnections } from "../../api/connections";
-import type { WorkflowNode } from "../../api/types";
+import type { GraphQLSpec, PaginationSpec, WorkflowNode } from "../../api/types";
 import { IconTrash, IconX } from "../../components/icons";
+import { PaginationFields } from "../../components/PaginationFields";
 
 interface NodeConfigPanelProps {
   node: WorkflowNode;
@@ -67,10 +68,16 @@ function SourceForm({
   onChange: NodeConfigPanelProps["onChange"];
   connections: { id: string; name: string; type: string }[];
 }) {
-  const cfg = node.config as { connectionId?: string; query?: { sql?: string; method?: string; path?: string; rowLimit?: number } };
+  const cfg = node.config as {
+    connectionId?: string;
+    query?: { sql?: string; method?: string; path?: string; rowLimit?: number; pagination?: PaginationSpec; graphql?: GraphQLSpec };
+  };
   const query = cfg.query ?? {};
   const selected = connections.find((c) => c.id === cfg.connectionId);
-  const isSQL = selected ? selected.type === "postgres" || selected.type === "mysql" : true;
+  const connType = selected?.type;
+  const isSQL = connType ? connType === "postgres" || connType === "mysql" : true;
+  const isGraphQL = connType === "graphql";
+  const isREST = connType === "rest";
 
   function setQuery(patch: Record<string, unknown>) {
     onChange(node.id, { config: updateConfig(node, { query: { ...query, ...patch } }) });
@@ -97,7 +104,7 @@ function SourceForm({
         </select>
       </div>
 
-      {isSQL ? (
+      {isSQL && (
         <div className="field">
           <label htmlFor="src-sql">SQL (SELECT only)</label>
           <textarea
@@ -108,20 +115,51 @@ function SourceForm({
             onChange={(e) => setQuery({ sql: e.target.value })}
           />
         </div>
-      ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "90px 1fr", gap: 8 }}>
+      )}
+
+      {isREST && (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "90px 1fr", gap: 8 }}>
+            <div className="field">
+              <label htmlFor="src-method">Method</label>
+              <select id="src-method" className="select" value={query.method ?? "GET"} onChange={(e) => setQuery({ method: e.target.value })}>
+                <option>GET</option>
+                <option>POST</option>
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor="src-path">Path</label>
+              <input id="src-path" className="input" value={query.path ?? ""} onChange={(e) => setQuery({ path: e.target.value })} />
+            </div>
+          </div>
+          <PaginationFields value={query.pagination} onChange={(p) => setQuery({ pagination: p })} />
+        </>
+      )}
+
+      {isGraphQL && (
+        <>
           <div className="field">
-            <label htmlFor="src-method">Method</label>
-            <select id="src-method" className="select" value={query.method ?? "GET"} onChange={(e) => setQuery({ method: e.target.value })}>
-              <option>GET</option>
-              <option>POST</option>
-            </select>
+            <label htmlFor="src-gql-query">GraphQL query</label>
+            <textarea
+              id="src-gql-query"
+              className="textarea"
+              rows={5}
+              value={query.graphql?.query ?? ""}
+              onChange={(e) => setQuery({ graphql: { ...query.graphql, query: e.target.value } })}
+            />
           </div>
           <div className="field">
-            <label htmlFor="src-path">Path</label>
-            <input id="src-path" className="input" value={query.path ?? ""} onChange={(e) => setQuery({ path: e.target.value })} />
+            <label htmlFor="src-gql-datapath">Data path</label>
+            <input
+              id="src-gql-datapath"
+              className="input"
+              placeholder="data.search"
+              value={query.graphql?.dataPath ?? ""}
+              onChange={(e) => setQuery({ graphql: { ...query.graphql, dataPath: e.target.value } })}
+            />
           </div>
-        </div>
+          <PaginationFields graphqlOnly value={query.pagination} onChange={(p) => setQuery({ pagination: p })} />
+        </>
       )}
 
       <div className="field">

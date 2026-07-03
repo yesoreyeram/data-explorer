@@ -43,7 +43,7 @@ type connectionRequest struct {
 func (h *Handlers) CreateConnection(w http.ResponseWriter, r *http.Request) {
 	var req connectionRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "malformed request body")
+		httpx.WriteDecodeError(w, err)
 		return
 	}
 	if req.Name == "" || req.Type == "" {
@@ -74,7 +74,7 @@ func (h *Handlers) UpdateConnection(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	var req connectionRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "malformed request body")
+		httpx.WriteDecodeError(w, err)
 		return
 	}
 
@@ -120,6 +120,10 @@ func (h *Handlers) TestConnection(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, http.StatusNotFound, "not_found", "connection not found")
 			return
 		}
+		if errors.Is(err, connections.ErrRateLimited) {
+			httpx.WriteError(w, http.StatusTooManyRequests, "rate_limited", err.Error())
+			return
+		}
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"healthy": false, "error": err.Error()})
 		return
 	}
@@ -130,7 +134,7 @@ func (h *Handlers) QueryConnection(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	var spec connections.QuerySpec
 	if err := httpx.DecodeJSON(r, &spec); err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "malformed request body")
+		httpx.WriteDecodeError(w, err)
 		return
 	}
 
@@ -142,13 +146,17 @@ func (h *Handlers) QueryConnection(w http.ResponseWriter, r *http.Request) {
 		outcome = audit.OutcomeFailure
 		meta["error"] = err.Error()
 	} else {
-		meta["rowCount"] = result.RowCount
+		meta["rowCount"] = result.NumRows()
 	}
 	h.recordAudit(r, "connection.query", "connection", id, outcome, meta)
 
 	if err != nil {
 		if errors.Is(err, connections.ErrNotFound) {
 			httpx.WriteError(w, http.StatusNotFound, "not_found", "connection not found")
+			return
+		}
+		if errors.Is(err, connections.ErrRateLimited) {
+			httpx.WriteError(w, http.StatusTooManyRequests, "rate_limited", err.Error())
 			return
 		}
 		httpx.WriteError(w, http.StatusBadGateway, "query_failed", err.Error())

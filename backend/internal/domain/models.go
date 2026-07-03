@@ -46,6 +46,7 @@ const (
 	ConnectionTypePostgres ConnectionType = "postgres"
 	ConnectionTypeMySQL    ConnectionType = "mysql"
 	ConnectionTypeREST     ConnectionType = "rest"
+	ConnectionTypeGraphQL  ConnectionType = "graphql"
 )
 
 type ConnectionStatus string
@@ -60,17 +61,17 @@ const (
 // Non-secret configuration lives in Config; anything sensitive (passwords,
 // API keys, tokens) is stored encrypted-at-rest and never returned by the API.
 type Connection struct {
-	ID          string           `json:"id"`
-	Name        string           `json:"name"`
-	Type        ConnectionType   `json:"type"`
-	Description string           `json:"description"`
-	Config      json.RawMessage  `json:"config"`
-	Status      ConnectionStatus `json:"status"`
-	LastTestedAt *time.Time      `json:"lastTestedAt,omitempty"`
-	LastError   string           `json:"lastError,omitempty"`
-	CreatedBy   string           `json:"createdBy"`
-	CreatedAt   time.Time        `json:"createdAt"`
-	UpdatedAt   time.Time        `json:"updatedAt"`
+	ID           string           `json:"id"`
+	Name         string           `json:"name"`
+	Type         ConnectionType   `json:"type"`
+	Description  string           `json:"description"`
+	Config       json.RawMessage  `json:"config"`
+	Status       ConnectionStatus `json:"status"`
+	LastTestedAt *time.Time       `json:"lastTestedAt,omitempty"`
+	LastError    string           `json:"lastError,omitempty"`
+	CreatedBy    string           `json:"createdBy"`
+	CreatedAt    time.Time        `json:"createdAt"`
+	UpdatedAt    time.Time        `json:"updatedAt"`
 }
 
 // ConnectionSecret is the sensitive payload for a connection. It is encrypted

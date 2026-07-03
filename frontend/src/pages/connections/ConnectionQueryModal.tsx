@@ -1,18 +1,24 @@
 import { useState } from "react";
 
 import { Modal } from "../../components/Modal";
-import { DataTable } from "../../components/DataTable";
+import { DataFrameView } from "../../components/DataFrameView";
+import { PaginationFields } from "../../components/PaginationFields";
 import { queryConnection } from "../../api/connections";
 import { extractErrorMessage } from "../../api/client";
-import type { Connection, QueryResult } from "../../api/types";
+import type { Connection, DataFrame, PaginationSpec } from "../../api/types";
 
 export function ConnectionQueryModal({ connection, onClose }: { connection: Connection; onClose: () => void }) {
   const isSQL = connection.type === "postgres" || connection.type === "mysql";
+  const isGraphQL = connection.type === "graphql";
+
   const [sql, setSql] = useState("SELECT 1");
   const [path, setPath] = useState("/");
   const [method, setMethod] = useState("GET");
+  const [gqlQuery, setGqlQuery] = useState("query { __typename }");
+  const [gqlDataPath, setGqlDataPath] = useState("data");
+  const [pagination, setPagination] = useState<PaginationSpec | undefined>(undefined);
   const [rowLimit, setRowLimit] = useState(100);
-  const [result, setResult] = useState<QueryResult | null>(null);
+  const [result, setResult] = useState<DataFrame | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
 
@@ -21,10 +27,12 @@ export function ConnectionQueryModal({ connection, onClose }: { connection: Conn
     setError(null);
     setResult(null);
     try {
-      const res = await queryConnection(
-        connection.id,
-        isSQL ? { sql, rowLimit } : { method, path, rowLimit },
-      );
+      const spec = isSQL
+        ? { sql, rowLimit }
+        : isGraphQL
+          ? { rowLimit, graphql: { query: gqlQuery, dataPath: gqlDataPath }, pagination }
+          : { method, path, rowLimit, pagination };
+      const res = await queryConnection(connection.id, spec);
       setResult(res);
     } catch (err) {
       setError(extractErrorMessage(err));
@@ -35,25 +43,51 @@ export function ConnectionQueryModal({ connection, onClose }: { connection: Conn
 
   return (
     <Modal title={`Run query – ${connection.name}`} onClose={onClose} width={720}>
-      {isSQL ? (
+      {isSQL && (
         <div className="field">
           <label htmlFor="query-sql">SQL (SELECT only)</label>
           <textarea id="query-sql" className="textarea" rows={5} value={sql} onChange={(e) => setSql(e.target.value)} />
         </div>
-      ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "100px 1fr", gap: 12 }}>
+      )}
+
+      {isGraphQL && (
+        <>
           <div className="field">
-            <label htmlFor="query-method">Method</label>
-            <select id="query-method" className="select" value={method} onChange={(e) => setMethod(e.target.value)}>
-              <option>GET</option>
-              <option>POST</option>
-            </select>
+            <label htmlFor="query-gql">GraphQL query</label>
+            <textarea id="query-gql" className="textarea" rows={6} value={gqlQuery} onChange={(e) => setGqlQuery(e.target.value)} />
           </div>
           <div className="field">
-            <label htmlFor="query-path">Path</label>
-            <input id="query-path" className="input" value={path} onChange={(e) => setPath(e.target.value)} />
+            <label htmlFor="query-gql-datapath">Data path</label>
+            <input
+              id="query-gql-datapath"
+              className="input"
+              placeholder="data.search"
+              value={gqlDataPath}
+              onChange={(e) => setGqlDataPath(e.target.value)}
+            />
+            <span className="field-hint">Where in the response the row(s) live. Relay-style edges/node are unwrapped automatically.</span>
           </div>
-        </div>
+          <PaginationFields graphqlOnly value={pagination} onChange={setPagination} />
+        </>
+      )}
+
+      {!isSQL && !isGraphQL && (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "100px 1fr", gap: 12 }}>
+            <div className="field">
+              <label htmlFor="query-method">Method</label>
+              <select id="query-method" className="select" value={method} onChange={(e) => setMethod(e.target.value)}>
+                <option>GET</option>
+                <option>POST</option>
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor="query-path">Path</label>
+              <input id="query-path" className="input" value={path} onChange={(e) => setPath(e.target.value)} />
+            </div>
+          </div>
+          <PaginationFields value={pagination} onChange={setPagination} />
+        </>
       )}
 
       <div className="toolbar" style={{ marginBottom: 12 }}>
@@ -76,14 +110,7 @@ export function ConnectionQueryModal({ connection, onClose }: { connection: Conn
 
       {error && <div className="error-banner">{error}</div>}
 
-      {result && (
-        <>
-          <p className="field-hint">
-            {result.rowCount} row(s){result.truncated ? " (truncated)" : ""}
-          </p>
-          <DataTable columns={result.columns} rows={result.rows} />
-        </>
-      )}
+      {result && <DataFrameView frame={result} />}
     </Modal>
   );
 }

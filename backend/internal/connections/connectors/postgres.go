@@ -10,14 +10,15 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/yesoreyeram/data-explorer/backend/internal/connections"
+	"github.com/yesoreyeram/data-explorer/backend/pkg/dataframe"
 )
 
 type PostgresConfig struct {
-	Host    string `json:"host"`
-	Port    int    `json:"port"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
 	Database string `json:"database"`
-	User    string `json:"user"`
-	SSLMode string `json:"sslMode"`
+	User     string `json:"user"`
+	SSLMode  string `json:"sslMode"`
 }
 
 type Postgres struct{}
@@ -63,14 +64,15 @@ func (p *Postgres) Test(ctx context.Context, cfgJSON json.RawMessage, secret map
 	return conn.Ping(ctx)
 }
 
-func (p *Postgres) Execute(ctx context.Context, cfgJSON json.RawMessage, secret map[string]string, spec connections.QuerySpec) (connections.QueryResult, error) {
+func (p *Postgres) Execute(ctx context.Context, cfgJSON json.RawMessage, secret map[string]string, spec connections.QuerySpec) (*dataframe.Frame, error) {
+	start := time.Now()
 	if err := EnsureReadOnlySQL(spec.SQL); err != nil {
-		return connections.QueryResult{}, err
+		return nil, err
 	}
 
 	dsn, err := p.dsn(cfgJSON, secret)
 	if err != nil {
-		return connections.QueryResult{}, err
+		return nil, err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -78,53 +80,61 @@ func (p *Postgres) Execute(ctx context.Context, cfgJSON json.RawMessage, secret 
 
 	conn, err := pgx.Connect(ctx, dsn)
 	if err != nil {
-		return connections.QueryResult{}, fmt.Errorf("connect: %w", err)
+		return nil, fmt.Errorf("connect: %w", err)
 	}
 	defer conn.Close(ctx)
 
 	// Belt-and-braces: cap server-side execution time too, in case a
 	// read-only SELECT is still expensive (e.g. missing index).
 	if _, err := conn.Exec(ctx, "SET statement_timeout = '25s'"); err != nil {
-		return connections.QueryResult{}, fmt.Errorf("set statement_timeout: %w", err)
+		return nil, fmt.Errorf("set statement_timeout: %w", err)
 	}
 
 	rows, err := conn.Query(ctx, spec.SQL, spec.Params...)
 	if err != nil {
-		return connections.QueryResult{}, fmt.Errorf("query: %w", err)
+		return nil, fmt.Errorf("query: %w", err)
 	}
 	defer rows.Close()
 
 	limit := connections.EffectiveRowLimit(spec.RowLimit)
-	result := connections.QueryResult{Rows: []map[string]any{}}
+	frame := dataframe.New(nil)
 
-	fields := rows.FieldDescriptions()
-	for _, f := range fields {
-		result.Columns = append(result.Columns, string(f.Name))
+	var columns []string
+	for _, f := range rows.FieldDescriptions() {
+		columns = append(columns, string(f.Name))
 	}
 
+	rowCount := 0
+	truncated := false
 	for rows.Next() {
-		if result.RowCount >= limit {
-			result.Truncated = true
+		if rowCount >= limit {
+			truncated = true
 			break
 		}
 		values, err := rows.Values()
 		if err != nil {
-			return connections.QueryResult{}, fmt.Errorf("scan row: %w", err)
+			return nil, fmt.Errorf("scan row: %w", err)
 		}
-		row := make(map[string]any, len(result.Columns))
-		for i, col := range result.Columns {
+		row := make(map[string]any, len(columns))
+		for i, col := range columns {
 			if i < len(values) {
 				row[col] = normalizePostgresValue(values[i])
 			}
 		}
-		result.Rows = append(result.Rows, row)
-		result.RowCount++
+		frame.AppendRow(row)
+		rowCount++
 	}
 	if err := rows.Err(); err != nil {
-		return connections.QueryResult{}, fmt.Errorf("read rows: %w", err)
+		return nil, fmt.Errorf("read rows: %w", err)
 	}
 
-	return result, nil
+	frame.SetMeta(dataframe.Metadata{
+		SourceType:  "postgres",
+		GeneratedAt: start,
+		DurationMs:  time.Since(start).Milliseconds(),
+		Truncated:   truncated,
+	})
+	return frame, nil
 }
 
 // normalizePostgresValue fixes up driver return types that are correct for

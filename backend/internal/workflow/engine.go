@@ -5,9 +5,13 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/yesoreyeram/data-explorer/backend/internal/connections"
 	"github.com/yesoreyeram/data-explorer/backend/internal/workflow/nodes"
+	"github.com/yesoreyeram/data-explorer/backend/pkg/dataframe"
 )
+
+// MaxRowsPerNode bounds the output of any single node, regardless of type -
+// see the guardrail comment in Run for why this matters most for join.
+const MaxRowsPerNode = 100_000
 
 type NodeExecutionResult struct {
 	NodeID     string `json:"nodeId"`
@@ -19,7 +23,7 @@ type NodeExecutionResult struct {
 }
 
 type RunResult struct {
-	Output       connections.QueryResult
+	Output       *dataframe.Frame
 	NodeResults  []NodeExecutionResult
 	FailedNodeID string
 }
@@ -52,13 +56,13 @@ func (e *Engine) Run(ctx context.Context, def Definition, deps nodes.Deps) (RunR
 		incoming[edge.Target] = append(incoming[edge.Target], edge)
 	}
 
-	outputs := map[string]connections.QueryResult{}
+	outputs := map[string]*dataframe.Frame{}
 	result := RunResult{}
 
 	for _, id := range order {
 		node := nodeByID[id]
 
-		execInput := nodes.ExecInput{Config: node.Config, Inputs: map[string]connections.QueryResult{}}
+		execInput := nodes.ExecInput{Config: node.Config, Inputs: map[string]*dataframe.Frame{}}
 		edgesIn := incoming[id]
 		for _, edge := range edgesIn {
 			upstream, ok := outputs[edge.Source]
@@ -95,7 +99,20 @@ func (e *Engine) Run(ctx context.Context, def Definition, deps nodes.Deps) (RunR
 			return result, fmt.Errorf("node %q (%s) failed: %w", id, node.Type, execErr)
 		}
 
-		nodeResult.RowsOut = out.RowCount
+		if out.Meta.Name == "" {
+			out.Meta.Name = node.Name
+		}
+		out.Meta.SourceID = id
+
+		// Defense in depth: a source node's output is already bounded by the
+		// connection's row limit, but a join can fan rows out well past
+		// either input's size (a cartesian-ish blow-up on a low-selectivity
+		// key), and that growth happens entirely in-process with no
+		// connector-level guardrail to catch it. Capping every node's output
+		// here protects the rest of the pipeline regardless of node type.
+		out.LimitRows(MaxRowsPerNode)
+
+		nodeResult.RowsOut = out.NumRows()
 		result.NodeResults = append(result.NodeResults, nodeResult)
 		outputs[id] = out
 		result.Output = out

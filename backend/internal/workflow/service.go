@@ -9,6 +9,7 @@ import (
 	"github.com/yesoreyeram/data-explorer/backend/internal/connections"
 	"github.com/yesoreyeram/data-explorer/backend/internal/domain"
 	"github.com/yesoreyeram/data-explorer/backend/internal/workflow/nodes"
+	"github.com/yesoreyeram/data-explorer/backend/pkg/dataframe"
 )
 
 // MaxExecutionDuration bounds how long a single workflow run may take,
@@ -74,23 +75,23 @@ func (s *Service) GetExecution(ctx context.Context, id string) (domain.WorkflowE
 // WorkflowExecution record (with per-node timing/row counts) regardless of
 // whether the run succeeds or fails, so the execution history always
 // reflects reality.
-func (s *Service) Execute(ctx context.Context, workflowID, triggeredBy string) (domain.WorkflowExecution, connections.QueryResult, error) {
+func (s *Service) Execute(ctx context.Context, workflowID, triggeredBy string) (domain.WorkflowExecution, *dataframe.Frame, error) {
 	wf, err := s.repo.Get(ctx, workflowID)
 	if err != nil {
-		return domain.WorkflowExecution{}, connections.QueryResult{}, err
+		return domain.WorkflowExecution{}, nil, err
 	}
 
 	def, err := ParseDefinition(wf.Definition)
 	if err != nil {
-		return domain.WorkflowExecution{}, connections.QueryResult{}, err
+		return domain.WorkflowExecution{}, nil, err
 	}
 	if err := def.Validate(); err != nil {
-		return domain.WorkflowExecution{}, connections.QueryResult{}, fmt.Errorf("invalid workflow definition: %w", err)
+		return domain.WorkflowExecution{}, nil, fmt.Errorf("invalid workflow definition: %w", err)
 	}
 
 	execRecord, err := s.repo.CreateExecution(ctx, workflowID, triggeredBy)
 	if err != nil {
-		return domain.WorkflowExecution{}, connections.QueryResult{}, err
+		return domain.WorkflowExecution{}, nil, err
 	}
 
 	runCtx, cancel := context.WithTimeout(ctx, MaxExecutionDuration)
@@ -109,7 +110,7 @@ func (s *Service) Execute(ctx context.Context, workflowID, triggeredBy string) (
 
 	nodeResultsJSON, _ := json.Marshal(runResult.NodeResults)
 	if err := s.repo.FinishExecution(ctx, execRecord.ID, status, duration.Milliseconds(), errMsg, nodeResultsJSON); err != nil {
-		return domain.WorkflowExecution{}, connections.QueryResult{}, fmt.Errorf("record execution result: %w", err)
+		return domain.WorkflowExecution{}, nil, fmt.Errorf("record execution result: %w", err)
 	}
 
 	execRecord.Status = status

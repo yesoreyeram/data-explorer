@@ -1,6 +1,8 @@
 // Package nodes implements the executor for each workflow node type. Every
-// executor speaks the same tabular contract (connections.QueryResult in,
-// connections.QueryResult out) so nodes can be freely rewired on the canvas.
+// executor speaks the same tabular contract - a *dataframe.Frame in,
+// a *dataframe.Frame out - so nodes can be freely rewired on the canvas
+// regardless of what produced their input (a SQL table, a REST/GraphQL
+// response, or another node's transform).
 package nodes
 
 import (
@@ -9,6 +11,7 @@ import (
 	"fmt"
 
 	"github.com/yesoreyeram/data-explorer/backend/internal/connections"
+	"github.com/yesoreyeram/data-explorer/backend/pkg/dataframe"
 )
 
 // DefaultInputKey is used for single-input nodes; the engine always makes
@@ -20,18 +23,18 @@ type ExecInput struct {
 	// Inputs is keyed by target handle (e.g. "left"/"right" for join) and,
 	// for convenience, also by the producing node's ID and - when there is
 	// exactly one upstream node - by DefaultInputKey.
-	Inputs map[string]connections.QueryResult
+	Inputs map[string]*dataframe.Frame
 	Config json.RawMessage
 }
 
-func (in ExecInput) SingleInput() (connections.QueryResult, error) {
-	if r, ok := in.Inputs[DefaultInputKey]; ok {
-		return r, nil
+func (in ExecInput) SingleInput() (*dataframe.Frame, error) {
+	if f, ok := in.Inputs[DefaultInputKey]; ok {
+		return f, nil
 	}
-	for _, r := range in.Inputs {
-		return r, nil
+	for _, f := range in.Inputs {
+		return f, nil
 	}
-	return connections.QueryResult{}, fmt.Errorf("no input available")
+	return nil, fmt.Errorf("no input available")
 }
 
 // Deps carries services node executors may need to reach out to.
@@ -40,7 +43,7 @@ type Deps struct {
 }
 
 type Executor interface {
-	Execute(ctx context.Context, deps Deps, in ExecInput) (connections.QueryResult, error)
+	Execute(ctx context.Context, deps Deps, in ExecInput) (*dataframe.Frame, error)
 }
 
 type Registry struct {

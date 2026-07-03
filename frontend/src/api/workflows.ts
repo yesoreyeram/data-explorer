@@ -1,5 +1,5 @@
 import { api } from "./client";
-import type { QueryResult, Workflow, WorkflowDefinition, WorkflowExecution, WorkflowStatus } from "./types";
+import type { DataFrame, Workflow, WorkflowDefinition, WorkflowExecution, WorkflowStatus } from "./types";
 
 export interface WorkflowInput {
   name: string;
@@ -34,7 +34,7 @@ export async function deleteWorkflow(id: string): Promise<void> {
 
 export interface ExecuteWorkflowResponse {
   execution: WorkflowExecution;
-  output?: QueryResult;
+  output?: DataFrame;
   error?: string;
 }
 
