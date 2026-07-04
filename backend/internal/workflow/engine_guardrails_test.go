@@ -39,4 +39,10 @@ func TestEngineCapsPerNodeRowCount(t *testing.T) {
 	if !result.Output.Meta.Truncated {
 		t.Fatal("expected Meta.Truncated to be set by the per-node guardrail")
 	}
+	if len(result.NodeResults) != 1 || !result.NodeResults[0].Truncated || result.NodeResults[0].RowCap != MaxRowsPerNode {
+		t.Fatalf("expected node result to include row cap/truncated metadata, got %+v", result.NodeResults)
+	}
+	if len(result.NodeResults[0].Warnings) == 0 {
+		t.Fatal("expected row-cap warning on node result")
+	}
 }

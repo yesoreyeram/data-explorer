@@ -15,16 +15,16 @@ const MaxRowsPerNode = 100_000
 const MaxNodeExecutionDuration = 60 * time.Second
 
 type NodeExecutionResult struct {
-	NodeID     string `json:"nodeId"`
-	NodeType   string `json:"nodeType"`
-	NodeName   string `json:"nodeName"`
-	RowsOut    int    `json:"rowsOut"`
-	RowCap     int    `json:"rowCap"`
-	Truncated  bool   `json:"truncated"`
-	DurationMs int64  `json:"durationMs"`
-	TimeoutMs  int64  `json:"timeoutMs"`
+	NodeID     string   `json:"nodeId"`
+	NodeType   string   `json:"nodeType"`
+	NodeName   string   `json:"nodeName"`
+	RowsOut    int      `json:"rowsOut"`
+	RowCap     int      `json:"rowCap"`
+	Truncated  bool     `json:"truncated"`
+	DurationMs int64    `json:"durationMs"`
+	TimeoutMs  int64    `json:"timeoutMs"`
 	Warnings   []string `json:"warnings,omitempty"`
-	Error      string `json:"error,omitempty"`
+	Error      string   `json:"error,omitempty"`
 }
 
 type RunResult struct {

@@ -19,11 +19,11 @@ import (
 const MaxExecutionDuration = 2 * time.Minute
 
 type Service struct {
-	repo        *Repository
-	engine      *Engine
-	connections *connections.Service
-	inFlight    atomic.Int64
-	activeMu    sync.Mutex
+	repo             *Repository
+	engine           *Engine
+	connections      *connections.Service
+	inFlight         atomic.Int64
+	activeMu         sync.Mutex
 	activeByWorkflow map[string]int
 }
 

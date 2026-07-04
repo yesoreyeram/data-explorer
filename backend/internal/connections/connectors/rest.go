@@ -195,15 +195,6 @@ func (r *REST) Execute(ctx context.Context, cfgJSON json.RawMessage, secret map[
 			if err := json.Unmarshal(resp.Body, &decoded); err != nil {
 				return nil, fmt.Errorf("response is not valid JSON: %w", err)
 			}
-
-			func appendBodyCapWarning(warnings []string, bytesRead int) []string {
-				const softRatio = 0.8
-				threshold := int(float64(httpclient.DefaultMaxResponseBytes) * softRatio)
-				if bytesRead < threshold {
-					return warnings
-				}
-				return append(warnings, fmt.Sprintf("Response body is %d bytes, at least 80%% of the %d byte cap. Narrow the request before it reaches the hard limit.", bytesRead, httpclient.DefaultMaxResponseBytes))
-			}
 		}
 		appendPage(decoded, "")
 	}
@@ -216,6 +207,15 @@ func (r *REST) Execute(ctx context.Context, cfgJSON json.RawMessage, secret map[
 		Warnings:    warnings,
 	})
 	return frame, nil
+}
+
+func appendBodyCapWarning(warnings []string, bytesRead int) []string {
+	const softRatio = 0.8
+	threshold := int(float64(httpclient.DefaultMaxResponseBytes) * softRatio)
+	if bytesRead < threshold {
+		return warnings
+	}
+	return append(warnings, fmt.Sprintf("Response body is %d bytes, at least 80%% of the %d byte cap. Narrow the request before it reaches the hard limit.", bytesRead, httpclient.DefaultMaxResponseBytes))
 }
 
 func truncateForError(b []byte) string {

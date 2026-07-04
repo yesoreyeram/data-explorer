@@ -13,9 +13,9 @@ import (
 )
 
 type HealthHandler struct {
-	db       *pgxpool.Pool
+	db        *pgxpool.Pool
 	workflows *workflow.Service
-	shutdown *ShutdownState
+	shutdown  *ShutdownState
 }
 
 func NewHealthHandler(db *pgxpool.Pool, workflows *workflow.Service, shutdown *ShutdownState) *HealthHandler {
