@@ -71,8 +71,7 @@ func (m *MySQL) Test(ctx context.Context, cfgJSON json.RawMessage, secret map[st
 
 func (m *MySQL) Execute(ctx context.Context, cfgJSON json.RawMessage, secret map[string]string, spec connections.QuerySpec) (*dataframe.Frame, error) {
 	start := time.Now()
-	sqlText, err := projectedReadOnlySQL(spec.SQL, spec.ProjectionHint)
-	if err != nil {
+	if err := EnsureReadOnlySQL(spec.SQL); err != nil {
 		return nil, err
 	}
 
@@ -85,13 +84,7 @@ func (m *MySQL) Execute(ctx context.Context, cfgJSON json.RawMessage, secret map
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	stmt, err := db.PrepareContext(ctx, sqlText)
-	if err != nil {
-		return nil, fmt.Errorf("prepare query: %w", err)
-	}
-	defer stmt.Close()
-
-	rows, err := stmt.QueryContext(ctx, spec.Params...)
+	rows, err := db.QueryContext(ctx, spec.SQL, spec.Params...)
 	if err != nil {
 		return nil, fmt.Errorf("query: %w", err)
 	}
