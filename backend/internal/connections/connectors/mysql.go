@@ -85,8 +85,13 @@ func (m *MySQL) Execute(ctx context.Context, cfgJSON json.RawMessage, secret map
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	// codeql[go/sql-injection]: sqlText is validated as a single read-only statement and any projection hint is limited to identifier-only columns.
-	rows, err := db.QueryContext(ctx, sqlText, spec.Params...)
+	stmt, err := db.PrepareContext(ctx, sqlText)
+	if err != nil {
+		return nil, fmt.Errorf("prepare query: %w", err)
+	}
+	defer stmt.Close()
+
+	rows, err := stmt.QueryContext(ctx, spec.Params...)
 	if err != nil {
 		return nil, fmt.Errorf("query: %w", err)
 	}
