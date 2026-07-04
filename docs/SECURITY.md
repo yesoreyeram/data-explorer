@@ -289,3 +289,13 @@ Being upfront about what this is *not*, yet:
   equivalent for Athena/BigQuery/Log Analytics) - their config validation
   and credential-selection logic is unit tested, but the actual SDK calls
   are only verified by hand against real cloud accounts.
+- **Scheduled workflow runs aren't re-authorized against the enabling
+  user's current permissions.** Enabling a schedule requires
+  `workflows:write` at the time it's set, but every subsequent run is
+  attributed to `"scheduler"`, not a user - there's no acting principal to
+  re-check `workflows:execute`/`connections:read` against on each tick. If
+  the user who enabled a schedule is later suspended or has their
+  permissions revoked, the schedule keeps running until someone with
+  `workflows:write` explicitly disables it. Treat "who can enable a
+  schedule" as "who can grant this workflow standing execute access",
+  not a one-time action.

@@ -28,6 +28,7 @@ import (
 	"github.com/yesoreyeram/data-explorer/backend/internal/platform/dbx"
 	"github.com/yesoreyeram/data-explorer/backend/internal/platform/logger"
 	"github.com/yesoreyeram/data-explorer/backend/internal/platform/migrator"
+	"github.com/yesoreyeram/data-explorer/backend/internal/scheduler"
 	"github.com/yesoreyeram/data-explorer/backend/internal/workflow"
 	"github.com/yesoreyeram/data-explorer/backend/internal/workflow/nodes"
 )
@@ -107,6 +108,9 @@ func run() error {
 		WriteTimeout:      cfg.HTTP.RequestTimeout + 5*time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
+
+	sched := scheduler.New(wfSvc, log)
+	go sched.Run(ctx)
 
 	serverErr := make(chan error, 1)
 	go func() {

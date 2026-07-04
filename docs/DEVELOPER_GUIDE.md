@@ -303,6 +303,29 @@ as templates:
    if it changes how the engine wires inputs, extend
    `internal/workflow/engine_test.go`.
 
+## Scheduled workflow execution
+
+See [`ARCHITECTURE.md`](ARCHITECTURE.md#scheduled-workflow-execution) for
+the design. There's nothing to wire up to add this to a new workflow - it's
+already a first-class field on every workflow (`PUT /workflows/{id}/schedule`,
+the "Schedule" button in the builder). Things worth knowing when touching
+this code:
+
+- `internal/scheduler.PollInterval` (15s) is the effective floor on
+  schedule precision, not the cron expression's own granularity - a
+  "run every minute" workflow can fire up to 15s late. Lowering it trades
+  precision for more frequent `DueSchedules` queries; there's a partial
+  index (`idx_workflows_schedule_due`) so that query stays cheap regardless.
+- Cron expressions are standard 5-field (`minute hour dom month dow`, no
+  seconds) via `github.com/robfig/cron/v3`'s `ParseStandard` - see
+  `internal/workflow/schedule.go`. If you need seconds-level scheduling,
+  that's `cron.ParseStandard` → a 6-field parser away, but nothing in this
+  codebase needs that precision today.
+- A scheduled run is indistinguishable from a manual one in the execution
+  history except for `triggeredBy` (`"scheduler"` vs. a user id) - it goes
+  through the exact same `workflow.Service.Execute`, so it gets the same
+  `MaxExecutionDuration` bound and the same guardrails as any other run.
+
 ## Database migrations
 
 Migrations are plain `.sql` files in `backend/db/migrations/`, embedded into

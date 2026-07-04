@@ -30,6 +30,10 @@ in from day one.
   and wire them together. Every node speaks the same typed, metadata-rich
   **dataframe** contract, so nodes compose regardless of what produced their
   input.
+- **Schedule** any workflow to run on its own with a standard cron
+  expression — the same execution path as a manual run, so the execution
+  history and guardrails (row limits, execution timeout) apply identically
+  whether a person or the scheduler triggered it.
 - **Paginate** REST APIs (offset/limit, page number, cursor, Link header) and
   GraphQL APIs (Relay cursor connections) automatically, with hard caps so a
   misconfigured "next page" can't loop forever.
@@ -52,6 +56,7 @@ in from day one.
 | ![AWS connection](docs/screenshots/12-connection-form-aws-athena.png) AWS connection (Athena) | ![GCP connection](docs/screenshots/13-connection-form-gcp-bigquery.png) Google Cloud connection (BigQuery) |
 | ![Integration catalog](docs/screenshots/15-catalog-browser.png) Integration catalog browser | ![Prefilled connection](docs/screenshots/17-catalog-prefilled-form.png) Connection form prefilled from the catalog |
 | ![Explore a saved connection](docs/screenshots/20-explore-saved-result.png) Explore: query a saved connection | ![Explore a temporary connection](docs/screenshots/22-explore-temporary-result.png) Explore: query a temporary (never-persisted) connection |
+| ![Workflow schedule](docs/screenshots/25-workflow-schedule-modal.png) Cron schedule with presets | ![Scheduled workflows list](docs/screenshots/27-workflows-list-scheduled.png) Scheduled workflow at a glance |
 
 More in [`docs/screenshots/`](docs/screenshots/), including the login page,
 connections list, workflows list, user/role administration, and the Azure
@@ -68,6 +73,7 @@ connection form.
 | Tabular data | `backend/pkg/dataframe` — standalone pandas-style Frame/Schema/Metadata library |
 | HTTP client  | `backend/pkg/httpclient` — standalone client with pluggable auth + pagination |
 | Cloud SDKs   | `aws-sdk-go-v2`, `cloud.google.com/go/{bigquery,storage}`, `azure-sdk-for-go` |
+| Scheduling   | `robfig/cron/v3` (cron expression parsing) + `internal/scheduler`'s in-process poll loop |
 
 Two of the backend packages are deliberately standalone, dependency-free
 libraries rather than being woven into the app:

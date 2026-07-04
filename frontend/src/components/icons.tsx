@@ -133,6 +133,14 @@ export const IconDownload = (p: IconProps) =>
     </>,
     p,
   );
+export const IconClock = (p: IconProps) =>
+  base(
+    <>
+      <circle cx="8" cy="8" r="6.2" />
+      <path d="M8 4.8V8l2.6 1.5" />
+    </>,
+    p,
+  );
 export const IconSettings = (p: IconProps) =>
   base(
     <>

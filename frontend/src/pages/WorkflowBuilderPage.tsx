@@ -17,16 +17,24 @@ import ReactFlow, {
 import "reactflow/dist/style.css";
 
 import { extractErrorMessage } from "../api/client";
-import { executeWorkflow, getWorkflow, listWorkflowExecutions, updateWorkflow } from "../api/workflows";
+import { executeWorkflow, getWorkflow, listWorkflowExecutions, setWorkflowSchedule, updateWorkflow } from "../api/workflows";
 import type { NodeType, DataFrame, WorkflowDefinition, WorkflowEdge, WorkflowNode, WorkflowStatus } from "../api/types";
 import { DataFrameView } from "../components/DataFrameView";
 import { StatusBadge } from "../components/StatusBadge";
 import { PermissionGate } from "../components/PermissionGate";
 import { PERMISSIONS } from "../lib/permissions";
-import { IconPlay } from "../components/icons";
+import { IconClock, IconPlay } from "../components/icons";
+import { Modal } from "../components/Modal";
 import { FlowNode, type FlowNodeData } from "./workflow/FlowNode";
 import { NodeConfigPanel } from "./workflow/NodeConfigPanel";
-import { Button } from "../components/ui";
+import { Badge, Button, Field, Input } from "../components/ui";
+
+const CRON_PRESETS: { label: string; cron: string }[] = [
+  { label: "Every 5 minutes", cron: "*/5 * * * *" },
+  { label: "Hourly", cron: "0 * * * *" },
+  { label: "Daily at midnight", cron: "0 0 * * *" },
+  { label: "Weekdays at 9am", cron: "0 9 * * 1-5" },
+];
 
 const nodeTypes: NodeTypes = { flowNode: FlowNode };
 
@@ -109,6 +117,9 @@ export function WorkflowBuilderPage() {
   const [runError, setRunError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [scheduleCron, setScheduleCron] = useState("");
+  const [scheduleEnabled, setScheduleEnabled] = useState(false);
 
   useEffect(() => {
     if (!workflow) return;
@@ -118,6 +129,8 @@ export function WorkflowBuilderPage() {
     setName(workflow.name);
     setDescription(workflow.description);
     setStatus(workflow.status);
+    setScheduleCron(workflow.scheduleCron ?? "");
+    setScheduleEnabled(workflow.scheduleEnabled);
     setDirty(false);
   }, [workflow, setNodes, setEdges]);
 
@@ -131,6 +144,15 @@ export function WorkflowBuilderPage() {
       queryClient.invalidateQueries({ queryKey: ["workflows"] });
       setStatus(wf.status);
       setDirty(false);
+    },
+  });
+
+  const scheduleMutation = useMutation({
+    mutationFn: (input: { cron: string; enabled: boolean }) => setWorkflowSchedule(id!, input.cron, input.enabled),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["workflow", id] });
+      queryClient.invalidateQueries({ queryKey: ["workflows"] });
+      setScheduleOpen(false);
     },
   });
 
@@ -245,6 +267,11 @@ export function WorkflowBuilderPage() {
           </p>
         </div>
         <div className="toolbar">
+          {workflow.scheduleEnabled && (
+            <Badge>
+              <IconClock width={11} height={11} /> scheduled
+            </Badge>
+          )}
           <Button onClick={() => navigate("/workflows")}>Back</Button>
           <select
             className="select"
@@ -258,6 +285,11 @@ export function WorkflowBuilderPage() {
             <option value="draft">Draft</option>
             <option value="published">Published</option>
           </select>
+          <PermissionGate permission={PERMISSIONS.workflowsWrite}>
+            <Button onClick={() => setScheduleOpen(true)}>
+              <IconClock width={13} height={13} /> Schedule
+            </Button>
+          </PermissionGate>
           <PermissionGate permission={PERMISSIONS.workflowsWrite}>
             <Button variant="primary" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
               {saveMutation.isPending ? "Saving…" : dirty ? "Save changes" : "Saved"}
@@ -361,6 +393,57 @@ export function WorkflowBuilderPage() {
             <DataFrameView frame={runResult} />
           </div>
         </div>
+      )}
+
+      {scheduleOpen && (
+        <Modal
+          title="Schedule"
+          onClose={() => setScheduleOpen(false)}
+          footer={
+            <>
+              <Button onClick={() => setScheduleOpen(false)}>Cancel</Button>
+              <Button
+                variant="primary"
+                disabled={scheduleMutation.isPending || (scheduleEnabled && scheduleCron.trim() === "")}
+                onClick={() => scheduleMutation.mutate({ cron: scheduleCron, enabled: scheduleEnabled })}
+              >
+                {scheduleMutation.isPending ? "Saving…" : "Save schedule"}
+              </Button>
+            </>
+          }
+        >
+          {scheduleMutation.isError && <div className="error-banner">{extractErrorMessage(scheduleMutation.error)}</div>}
+
+          <label className="checkbox-row" style={{ marginBottom: 12 }}>
+            <input type="checkbox" checked={scheduleEnabled} onChange={(e) => setScheduleEnabled(e.target.checked)} />
+            <span>Run this workflow automatically on a schedule</span>
+          </label>
+
+          <Field htmlFor="schedule-cron" label="Cron expression" hint="Standard 5-field cron: minute hour day-of-month month day-of-week.">
+            <Input
+              id="schedule-cron"
+              placeholder="*/5 * * * *"
+              value={scheduleCron}
+              onChange={(e) => setScheduleCron(e.target.value)}
+              disabled={!scheduleEnabled}
+            />
+          </Field>
+
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
+            {CRON_PRESETS.map((preset) => (
+              <Button key={preset.cron} size="sm" disabled={!scheduleEnabled} onClick={() => setScheduleCron(preset.cron)}>
+                {preset.label}
+              </Button>
+            ))}
+          </div>
+
+          {workflow.scheduleEnabled && (
+            <p className="field-hint">
+              {workflow.scheduleLastRun && <>Last run: {new Date(workflow.scheduleLastRun).toLocaleString()}. </>}
+              {workflow.scheduleNextRun && <>Next run: {new Date(workflow.scheduleNextRun).toLocaleString()}.</>}
+            </p>
+          )}
+        </Modal>
       )}
     </div>
   );

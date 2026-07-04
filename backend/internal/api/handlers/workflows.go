@@ -85,6 +85,38 @@ func (h *Handlers) UpdateWorkflow(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, wf)
 }
 
+type workflowScheduleRequest struct {
+	Cron    string `json:"cron"`
+	Enabled bool   `json:"enabled"`
+}
+
+func (h *Handlers) SetWorkflowSchedule(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var req workflowScheduleRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteDecodeError(w, err)
+		return
+	}
+	if req.Enabled && req.Cron == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "cron is required when enabling a schedule")
+		return
+	}
+
+	wf, err := h.Workflows.SetSchedule(r.Context(), id, req.Cron, req.Enabled)
+	if err != nil {
+		h.recordAudit(r, "workflow.schedule.update", "workflow", id, audit.OutcomeFailure, map[string]any{"cron": req.Cron, "enabled": req.Enabled, "error": err.Error()})
+		if errors.Is(err, workflow.ErrNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "not_found", "workflow not found")
+			return
+		}
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+
+	h.recordAudit(r, "workflow.schedule.update", "workflow", id, audit.OutcomeSuccess, map[string]any{"cron": req.Cron, "enabled": req.Enabled})
+	httpx.WriteJSON(w, http.StatusOK, wf)
+}
+
 func (h *Handlers) DeleteWorkflow(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if err := h.Workflows.Delete(r.Context(), id); err != nil {

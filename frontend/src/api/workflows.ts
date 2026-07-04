@@ -47,3 +47,8 @@ export async function listWorkflowExecutions(id: string, limit = 50): Promise<Wo
   const res = await api.get<WorkflowExecution[]>(`/workflows/${id}/executions`, { params: { limit } });
   return res.data ?? [];
 }
+
+export async function setWorkflowSchedule(id: string, cron: string, enabled: boolean): Promise<Workflow> {
+  const res = await api.put<Workflow>(`/workflows/${id}/schedule`, { cron, enabled });
+  return res.data;
+}

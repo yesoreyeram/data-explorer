@@ -63,6 +63,38 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	return s.repo.Delete(ctx, id)
 }
 
+// SetSchedule validates cronExpr (when enabled) and persists it, computing
+// the next run time from now so the scheduler's next poll picks it up.
+// Disabling (enabled=false) keeps the stored cron string so re-enabling
+// doesn't require retyping it, but clears schedule_next_run.
+func (s *Service) SetSchedule(ctx context.Context, id, cronExpr string, enabled bool) (domain.Workflow, error) {
+	var nextRun *time.Time
+	if enabled {
+		if _, err := s.repo.Get(ctx, id); err != nil {
+			return domain.Workflow{}, err
+		}
+		next, err := NextRun(cronExpr, time.Now())
+		if err != nil {
+			return domain.Workflow{}, err
+		}
+		nextRun = &next
+	}
+	return s.repo.UpdateSchedule(ctx, id, cronExpr, enabled, nextRun)
+}
+
+// DueSchedules and MarkScheduleRun back internal/scheduler's poll loop -
+// routed through the service (not the repository directly) so schedule
+// reads/writes go through the same layer as everything else, even though
+// today they're thin passthroughs.
+
+func (s *Service) DueSchedules(ctx context.Context) ([]domain.Workflow, error) {
+	return s.repo.DueSchedules(ctx, time.Now())
+}
+
+func (s *Service) MarkScheduleRun(ctx context.Context, id string, lastRun time.Time, nextRun *time.Time) error {
+	return s.repo.MarkScheduleRun(ctx, id, lastRun, nextRun)
+}
+
 func (s *Service) ListExecutions(ctx context.Context, workflowID string, limit int) ([]domain.WorkflowExecution, error) {
 	return s.repo.ListExecutions(ctx, workflowID, limit)
 }

@@ -68,8 +68,9 @@ backend/
     connections/            connection CRUD, secret encryption, connector interface, per-connection rate limit
       connectors/           postgres, mysql, rest, graphql, aws, gcp, azure implementations + shared auth/pagination/object-parsing glue
     catalog/                static integration catalog (prefill data for the connection form - see below)
-    workflow/                DAG definition, topological execution engine, size/row guardrails
+    workflow/                DAG definition, topological execution engine, size/row guardrails, cron schedule parsing
       nodes/                  one executor per node type (source/transform/filter/join/aggregate/output)
+    scheduler/               in-process poll loop that executes due cron-scheduled workflows
     observability/          Prometheus metrics registry
     api/
       middleware/           request id, recovery, security headers, rate limit, auth, rbac, access log
@@ -375,6 +376,29 @@ Every run is persisted as a `workflow_executions` row (status, duration,
 per-node timings/row counts/errors) regardless of success or failure, which
 is what backs the "Execution history" panel in the builder UI.
 
+## Scheduled workflow execution
+
+`internal/scheduler` is a single in-process polling loop (`PollInterval` =
+15s), not a separate worker process or queue - the same "one Go binary"
+simplicity this project defaults to everywhere else (see "Scaling beyond a
+single request" below for where that stops being sufficient). A workflow
+opts in with a standard 5-field cron expression
+(`workflows.schedule_cron`/`schedule_enabled`); `workflow.Service.SetSchedule`
+validates it (`ParseCronSchedule`, via `robfig/cron/v3`) and computes
+`schedule_next_run` up front, so the scheduler's query is a cheap
+`WHERE schedule_enabled AND schedule_next_run <= now()` against a partial
+index, not a live cron evaluation on every tick.
+
+A due workflow runs through the exact same `workflow.Service.Execute` path
+as a manual "Run" click or an API call - same DAG engine, same
+`MaxExecutionDuration` bound, same `workflow_executions` row - with one
+difference: `TriggeredBy` is the sentinel string `"scheduler"` instead of a
+user id, which is why `workflow_executions.triggered_by` is a plain string
+column (like `audit_logs.actor_id`) rather than a foreign key to `users` -
+a scheduled run has no acting user to attribute it to, and inventing a
+synthetic system user just to satisfy a FK would show up in every user list
+in the product for no real benefit.
+
 ## Observability
 
 - **Structured logs** (`internal/platform/logger`): JSON by default, one line
@@ -449,11 +473,13 @@ Two extension points are intentionally left as clean seams rather than
 built out speculatively:
 
 - **Async workflow execution**: `workflow.Service.Execute` currently runs
-  inline. If pipelines grow beyond what fits in one HTTP request's budget,
-  the natural next step is to have this method enqueue a job (e.g. to a
-  Postgres-backed queue table or a proper broker) and have the API return
-  immediately with the `workflow_executions` row in `running` state, which
-  the frontend already polls for.
+  inline, whether triggered by an HTTP request or by `internal/scheduler`'s
+  background goroutine. If pipelines grow beyond what fits in one request's
+  (or one poll tick's) budget, the natural next step is to have this method
+  enqueue a job (e.g. to a Postgres-backed queue table or a proper broker)
+  and have the API return immediately with the `workflow_executions` row in
+  `running` state, which the frontend already polls for - the scheduler
+  would enqueue the same way rather than executing directly.
 - **Connection pooling per external target**: connectors currently open a
   fresh connection per `Test`/`Execute` call for isolation simplicity. A
   per-connection pool (keyed by connection ID) would reduce handshake

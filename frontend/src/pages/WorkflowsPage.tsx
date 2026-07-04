@@ -7,9 +7,9 @@ import { extractErrorMessage } from "../api/client";
 import { StatusBadge } from "../components/StatusBadge";
 import { PermissionGate } from "../components/PermissionGate";
 import { PERMISSIONS } from "../lib/permissions";
-import { IconPlus, IconTrash, IconWorkflow } from "../components/icons";
+import { IconClock, IconPlus, IconTrash, IconWorkflow } from "../components/icons";
 import { Modal } from "../components/Modal";
-import { Button, Card, CardBody, Field, IconButton, Input } from "../components/ui";
+import { Badge, Button, Card, CardBody, Field, IconButton, Input } from "../components/ui";
 
 export function WorkflowsPage() {
   const navigate = useNavigate();
@@ -81,7 +81,14 @@ export function WorkflowsPage() {
               <CardBody>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                   <strong>{wf.name}</strong>
-                  <StatusBadge status={wf.status} />
+                  <div style={{ display: "flex", gap: 4 }}>
+                    {wf.scheduleEnabled && (
+                      <Badge>
+                        <IconClock width={10} height={10} /> scheduled
+                      </Badge>
+                    )}
+                    <StatusBadge status={wf.status} />
+                  </div>
                 </div>
                 <p style={{ color: "var(--text-secondary)", fontSize: 12, minHeight: 32 }}>{wf.description || "No description"}</p>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11, color: "var(--text-tertiary)" }}>

@@ -102,6 +102,15 @@ type Workflow struct {
 	CreatedBy   string          `json:"createdBy"`
 	CreatedAt   time.Time       `json:"createdAt"`
 	UpdatedAt   time.Time       `json:"updatedAt"`
+
+	// Schedule: a standard 5-field cron expression (minute hour dom month
+	// dow) evaluated by the scheduler - see internal/scheduler. Empty
+	// ScheduleCron/false ScheduleEnabled means the workflow only ever runs
+	// on manual/API trigger.
+	ScheduleCron    string     `json:"scheduleCron,omitempty"`
+	ScheduleEnabled bool       `json:"scheduleEnabled"`
+	ScheduleNextRun *time.Time `json:"scheduleNextRun,omitempty"`
+	ScheduleLastRun *time.Time `json:"scheduleLastRun,omitempty"`
 }
 
 type ExecutionStatus string

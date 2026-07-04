@@ -85,6 +85,7 @@ func NewRouter(cfg *config.Config, h *handlers.Handlers, health *handlers.Health
 			r.With(custommw.RequirePermission(rbac.PermWorkflowsRead)).Get("/{id}", h.GetWorkflow)
 			r.With(custommw.RequirePermission(rbac.PermWorkflowsWrite)).Put("/{id}", h.UpdateWorkflow)
 			r.With(custommw.RequirePermission(rbac.PermWorkflowsWrite)).Delete("/{id}", h.DeleteWorkflow)
+			r.With(custommw.RequirePermission(rbac.PermWorkflowsWrite)).Put("/{id}/schedule", h.SetWorkflowSchedule)
 			r.With(custommw.RequirePermission(rbac.PermWorkflowsExecute)).Post("/{id}/execute", h.ExecuteWorkflow)
 			r.With(custommw.RequirePermission(rbac.PermWorkflowsRead)).Get("/{id}/executions", h.ListWorkflowExecutions)
 			r.With(custommw.RequirePermission(rbac.PermWorkflowsRead)).Get("/{id}/executions/{executionId}", h.GetWorkflowExecution)

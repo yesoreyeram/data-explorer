@@ -210,6 +210,10 @@ export interface Workflow {
   createdBy: string;
   createdAt: string;
   updatedAt: string;
+  scheduleCron?: string;
+  scheduleEnabled: boolean;
+  scheduleNextRun?: string;
+  scheduleLastRun?: string;
 }
 
 export type ExecutionStatus = "running" | "succeeded" | "failed";
