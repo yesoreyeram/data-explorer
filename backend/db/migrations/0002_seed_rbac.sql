@@ -1,7 +1,7 @@
 -- Seed the fixed permission set and three built-in system roles:
 --   admin  - full control, including users/roles and audit log
---   editor - can manage connections & workflows and execute them
---   viewer - read-only access, can execute existing workflows
+--   editor - can manage connections/workflows, execute workflows, and read users/roles
+--   viewer - read-only access to connections, workflows, users, and roles
 
 INSERT INTO permissions (code, description) VALUES
     ('users:read',        'View users'),
@@ -30,10 +30,11 @@ INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM roles r CROSS JOIN permissions p
 WHERE r.name = 'editor'
   AND p.code IN ('connections:read','connections:write','connections:test',
-                 'workflows:read','workflows:write','workflows:execute');
+                 'workflows:read','workflows:write','workflows:execute',
+                 'roles:read','users:read');
 
--- viewer: read-only + execute
+-- viewer: read-only
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM roles r CROSS JOIN permissions p
 WHERE r.name = 'viewer'
-  AND p.code IN ('connections:read','workflows:read','workflows:execute');
+  AND p.code IN ('connections:read','workflows:read','roles:read','users:read');

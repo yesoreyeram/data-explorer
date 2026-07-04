@@ -8,6 +8,7 @@ import { listAuditLogs } from "../../api/audit";
 import { extractErrorMessage } from "../../api/client";
 import type { Connection } from "../../api/types";
 import { Badge, Button } from "../../components/ui";
+import { PermissionGate } from "../../components/PermissionGate";
 
 // ErrorCode -> a plain-language label for the badge (see backend/internal/connections.ErrorCode).
 const ERROR_CODE_LABEL: Record<string, string> = {
@@ -72,9 +73,11 @@ export function ConnectionHealthModal({ connection: initial, onClose }: { connec
               : "Never checked"}
           </span>
         </div>
-        <Button variant="primary" size="sm" onClick={runHealthCheck} disabled={running}>
-          {running ? "Checking..." : "Run health check"}
-        </Button>
+        <PermissionGate permission="connections:test">
+          <Button variant="primary" size="sm" onClick={runHealthCheck} disabled={running}>
+            {running ? "Running…" : "Run health check"}
+          </Button>
+        </PermissionGate>
       </div>
 
       {runError && <div className="error-banner">{runError}</div>}

@@ -30,14 +30,17 @@ func NewREST() *REST { return &REST{} }
 func (r *REST) parseConfig(cfgJSON json.RawMessage) (RESTConfig, error) {
 	var cfg RESTConfig
 	if err := json.Unmarshal(cfgJSON, &cfg); err != nil {
-		return RESTConfig{}, fmt.Errorf("invalid rest config: %w", err)
+		return RESTConfig{}, connections.NewConfigError("REST configuration is not valid JSON.")
 	}
 	if cfg.BaseURL == "" {
-		return RESTConfig{}, fmt.Errorf("baseUrl is required")
+		return RESTConfig{}, connections.NewConfigError("Base URL is required.")
+	}
+	if strings.ContainsAny(cfg.BaseURL, "{}") {
+		return RESTConfig{}, connections.NewConfigError("Replace placeholder values in the base URL before saving.")
 	}
 	base, err := url.Parse(cfg.BaseURL)
 	if err != nil || (base.Scheme != "http" && base.Scheme != "https") {
-		return RESTConfig{}, fmt.Errorf("baseUrl must be a valid http(s) URL")
+		return RESTConfig{}, connections.NewConfigError("Base URL must be a valid HTTP or HTTPS URL.")
 	}
 	return cfg, nil
 }
@@ -113,8 +116,8 @@ func (r *REST) Test(ctx context.Context, cfgJSON json.RawMessage, secret map[str
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
-	if resp.StatusCode >= 500 {
-		return fmt.Errorf("upstream returned %d", resp.StatusCode)
+	if resp.IsError() {
+		return fmt.Errorf("upstream returned status %d", resp.StatusCode)
 	}
 	return nil
 }

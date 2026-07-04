@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/yesoreyeram/data-explorer/backend/internal/connections"
@@ -26,14 +27,17 @@ func NewGraphQL() *GraphQL { return &GraphQL{} }
 func (g *GraphQL) parseConfig(cfgJSON json.RawMessage) (GraphQLConfig, error) {
 	var cfg GraphQLConfig
 	if err := json.Unmarshal(cfgJSON, &cfg); err != nil {
-		return GraphQLConfig{}, fmt.Errorf("invalid graphql config: %w", err)
+		return GraphQLConfig{}, connections.NewConfigError("GraphQL configuration is not valid JSON.")
 	}
 	if cfg.Endpoint == "" {
-		return GraphQLConfig{}, fmt.Errorf("endpoint is required")
+		return GraphQLConfig{}, connections.NewConfigError("Endpoint is required.")
+	}
+	if strings.ContainsAny(cfg.Endpoint, "{}") {
+		return GraphQLConfig{}, connections.NewConfigError("Replace placeholder values in the endpoint before saving.")
 	}
 	parsed, err := url.Parse(cfg.Endpoint)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		return GraphQLConfig{}, fmt.Errorf("endpoint must be a valid http(s) URL")
+		return GraphQLConfig{}, connections.NewConfigError("Endpoint must be a valid HTTP or HTTPS URL.")
 	}
 	return cfg, nil
 }
@@ -67,8 +71,8 @@ func (g *GraphQL) Test(ctx context.Context, cfgJSON json.RawMessage, secret map[
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
-	if resp.StatusCode >= 500 {
-		return fmt.Errorf("upstream returned %d", resp.StatusCode)
+	if resp.IsError() {
+		return fmt.Errorf("upstream returned status %d", resp.StatusCode)
 	}
 	return nil
 }

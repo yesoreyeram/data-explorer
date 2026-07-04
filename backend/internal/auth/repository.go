@@ -220,6 +220,11 @@ func (r *Repository) RevokeRefreshToken(ctx context.Context, tokenHash string) e
 	return err
 }
 
+func (r *Repository) RevokeUserRefreshTokens(ctx context.Context, userID string) error {
+	_, err := r.db.Exec(ctx, `UPDATE refresh_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL`, userID)
+	return err
+}
+
 func isUniqueViolation(err error) bool {
 	var pgErr interface{ SQLState() string }
 	if errors.As(err, &pgErr) {

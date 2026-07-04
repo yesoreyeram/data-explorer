@@ -41,15 +41,24 @@ func NewService(repo *Repository, tokens *TokenManager, refreshTokenTTL time.Dur
 	return &Service{repo: repo, tokens: tokens, refreshTokenTTL: refreshTokenTTL}
 }
 
-// Register creates a new user. New self-service signups get the "viewer"
-// role by default (principle of least privilege); elevation to editor/admin
-// is an explicit admin action via the roles API.
-func (s *Service) Register(ctx context.Context, email, displayName, password string) (domain.User, error) {
+// Register creates a new user and immediately issues a session. New
+// self-service signups get the "viewer" role by default (principle of least
+// privilege); elevation to editor/admin is an explicit admin action via the
+// roles API.
+func (s *Service) Register(ctx context.Context, email, displayName, password, ip, userAgent string) (domain.User, TokenPair, error) {
 	hash, err := crypto.HashPassword(password)
 	if err != nil {
-		return domain.User{}, fmt.Errorf("hash password: %w", err)
+		return domain.User{}, TokenPair{}, fmt.Errorf("hash password: %w", err)
 	}
-	return s.repo.CreateUser(ctx, email, displayName, hash, []string{"viewer"})
+	user, err := s.repo.CreateUser(ctx, email, displayName, hash, []string{"viewer"})
+	if err != nil {
+		return domain.User{}, TokenPair{}, err
+	}
+	pair, err := s.issueTokenPair(ctx, user, ip, userAgent)
+	if err != nil {
+		return domain.User{}, TokenPair{}, err
+	}
+	return user, pair, nil
 }
 
 func (s *Service) Login(ctx context.Context, email, password, ip, userAgent string) (domain.User, TokenPair, error) {
@@ -85,7 +94,11 @@ func (s *Service) Refresh(ctx context.Context, refreshToken, ip, userAgent strin
 	if err != nil {
 		return domain.User{}, TokenPair{}, ErrInvalidCredentials
 	}
-	if rec.RevokedAt != nil || time.Now().After(rec.ExpiresAt) {
+	if rec.RevokedAt != nil {
+		_ = s.repo.RevokeUserRefreshTokens(ctx, rec.UserID)
+		return domain.User{}, TokenPair{}, ErrInvalidCredentials
+	}
+	if time.Now().After(rec.ExpiresAt) {
 		return domain.User{}, TokenPair{}, ErrInvalidCredentials
 	}
 
@@ -110,6 +123,10 @@ func (s *Service) Refresh(ctx context.Context, refreshToken, ip, userAgent strin
 
 func (s *Service) Logout(ctx context.Context, refreshToken string) error {
 	return s.repo.RevokeRefreshToken(ctx, hashToken(refreshToken))
+}
+
+func (s *Service) RevokeUserSessions(ctx context.Context, userID string) error {
+	return s.repo.RevokeUserRefreshTokens(ctx, userID)
 }
 
 func (s *Service) issueTokenPair(ctx context.Context, user domain.User, ip, userAgent string) (TokenPair, error) {

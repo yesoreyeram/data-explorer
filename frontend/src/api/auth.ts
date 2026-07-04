@@ -5,6 +5,8 @@ export interface LoginResponse {
   accessToken: string;
   expiresAt: string;
   user: User;
+  roles: string[];
+  permissions: string[];
 }
 
 export async function login(email: string, password: string): Promise<LoginResponse> {
@@ -12,8 +14,8 @@ export async function login(email: string, password: string): Promise<LoginRespo
   return res.data;
 }
 
-export async function register(email: string, displayName: string, password: string): Promise<User> {
-  const res = await api.post<User>("/auth/register", { email, displayName, password });
+export async function register(email: string, displayName: string, password: string): Promise<LoginResponse> {
+  const res = await api.post<LoginResponse>("/auth/register", { email, displayName, password });
   return res.data;
 }
 

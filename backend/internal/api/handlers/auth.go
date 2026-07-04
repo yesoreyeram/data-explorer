@@ -33,7 +33,7 @@ func (h *Handlers) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.Auth.Register(r.Context(), req.Email, req.DisplayName, req.Password)
+	user, pair, err := h.Auth.Register(r.Context(), req.Email, req.DisplayName, req.Password, httpx.ClientIP(r), r.UserAgent())
 	if err != nil {
 		if errors.Is(err, auth.ErrConflict) {
 			httpx.WriteError(w, http.StatusConflict, "conflict", "an account with this email already exists")
@@ -43,8 +43,20 @@ func (h *Handlers) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	roles, permissions, err := h.AuthRepository.GetUserRolesAndPermissions(r.Context(), user.ID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to register user")
+		return
+	}
+	h.setRefreshCookie(w, pair.RefreshToken, pair.RefreshTokenExpiresAt)
 	h.recordAudit(r, "user.register", "user", user.ID, audit.OutcomeSuccess, map[string]any{"email": user.Email})
-	httpx.WriteJSON(w, http.StatusCreated, user)
+	httpx.WriteJSON(w, http.StatusCreated, loginResponse{
+		AccessToken: pair.AccessToken,
+		ExpiresAt:   pair.AccessTokenExpiresAt.Format(httpTimeFormat),
+		User:        user,
+		Roles:       roles,
+		Permissions: permissions,
+	})
 }
 
 type loginRequest struct {
@@ -53,9 +65,11 @@ type loginRequest struct {
 }
 
 type loginResponse struct {
-	AccessToken string `json:"accessToken"`
-	ExpiresAt   string `json:"expiresAt"`
-	User        any    `json:"user"`
+	AccessToken string   `json:"accessToken"`
+	ExpiresAt   string   `json:"expiresAt"`
+	User        any      `json:"user"`
+	Roles       []string `json:"roles"`
+	Permissions []string `json:"permissions"`
 }
 
 func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
@@ -79,11 +93,18 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 
 	h.setRefreshCookie(w, pair.RefreshToken, pair.RefreshTokenExpiresAt)
 	h.recordAudit(r, "user.login", "user", user.ID, audit.OutcomeSuccess, map[string]any{"email": user.Email})
+	roles, permissions, err := h.AuthRepository.GetUserRolesAndPermissions(r.Context(), user.ID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to resolve user permissions")
+		return
+	}
 
 	httpx.WriteJSON(w, http.StatusOK, loginResponse{
 		AccessToken: pair.AccessToken,
 		ExpiresAt:   pair.AccessTokenExpiresAt.Format(httpTimeFormat),
 		User:        user,
+		Roles:       roles,
+		Permissions: permissions,
 	})
 }
 
@@ -102,10 +123,17 @@ func (h *Handlers) Refresh(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.setRefreshCookie(w, pair.RefreshToken, pair.RefreshTokenExpiresAt)
+	roles, permissions, err := h.AuthRepository.GetUserRolesAndPermissions(r.Context(), user.ID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to resolve user permissions")
+		return
+	}
 	httpx.WriteJSON(w, http.StatusOK, loginResponse{
 		AccessToken: pair.AccessToken,
 		ExpiresAt:   pair.AccessTokenExpiresAt.Format(httpTimeFormat),
 		User:        user,
+		Roles:       roles,
+		Permissions: permissions,
 	})
 }
 

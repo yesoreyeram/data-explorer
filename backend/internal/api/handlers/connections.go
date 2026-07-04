@@ -105,13 +105,19 @@ func (h *Handlers) DeleteConnection(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) TestConnection(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	err := h.Connections.Test(r.Context(), id)
+	result, err := h.Connections.Test(r.Context(), id)
 
 	outcome := audit.OutcomeSuccess
-	meta := map[string]any{}
+	meta := map[string]any{"durationMs": result.DurationMs, "status": result.Status}
 	if err != nil {
 		outcome = audit.OutcomeFailure
 		meta["error"] = err.Error()
+		if result.ErrorCode != "" {
+			meta["errorCode"] = result.ErrorCode
+		}
+		if result.ErrorRemediation != "" {
+			meta["errorRemediation"] = result.ErrorRemediation
+		}
 	}
 	h.recordAudit(r, "connection.test", "connection", id, outcome, meta)
 
@@ -127,10 +133,13 @@ func (h *Handlers) TestConnection(w http.ResponseWriter, r *http.Request) {
 		var he *connections.HealthError
 		if errors.As(err, &he) {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
+				"status":           result.Status,
+				"lastTestedAt":     result.LastTestedAt.Format(httpTimeFormat),
+				"durationMs":       result.DurationMs,
 				"healthy":          false,
-				"error":            he.Message,
-				"errorCode":        string(he.Code),
-				"errorRemediation": he.Remediation,
+				"error":            result.Error,
+				"errorCode":        result.ErrorCode,
+				"errorRemediation": result.ErrorRemediation,
 				"errorDetail":      he.Detail(),
 			})
 			return
@@ -138,7 +147,12 @@ func (h *Handlers) TestConnection(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"healthy": false, "error": err.Error()})
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"healthy": true})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"status":       result.Status,
+		"lastTestedAt": result.LastTestedAt.Format(httpTimeFormat),
+		"durationMs":   result.DurationMs,
+		"healthy":      true,
+	})
 }
 
 func (h *Handlers) QueryConnection(w http.ResponseWriter, r *http.Request) {
