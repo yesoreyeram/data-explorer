@@ -66,10 +66,10 @@ func (p *Postgres) Test(ctx context.Context, cfgJSON json.RawMessage, secret map
 
 func (p *Postgres) Execute(ctx context.Context, cfgJSON json.RawMessage, secret map[string]string, spec connections.QuerySpec) (*dataframe.Frame, error) {
 	start := time.Now()
-	if err := EnsureReadOnlySQL(spec.SQL); err != nil {
+	sqlText, err := projectedReadOnlySQL(spec.SQL, spec.ProjectionHint)
+	if err != nil {
 		return nil, err
 	}
-	sqlText := applyProjectionHint(spec.SQL, spec.ProjectionHint)
 
 	dsn, err := p.dsn(cfgJSON, secret)
 	if err != nil {

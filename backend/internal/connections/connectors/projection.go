@@ -28,3 +28,11 @@ func applyProjectionHint(sqlText string, columns []string) string {
 	}
 	return "SELECT " + strings.Join(safe, ", ") + " FROM (" + sqlText + ") AS de_projection"
 }
+
+func projectedReadOnlySQL(sqlText string, columns []string) (string, error) {
+	projected := applyProjectionHint(sqlText, columns)
+	if err := EnsureReadOnlySQL(projected); err != nil {
+		return "", err
+	}
+	return projected, nil
+}

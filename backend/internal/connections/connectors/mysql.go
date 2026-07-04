@@ -71,10 +71,10 @@ func (m *MySQL) Test(ctx context.Context, cfgJSON json.RawMessage, secret map[st
 
 func (m *MySQL) Execute(ctx context.Context, cfgJSON json.RawMessage, secret map[string]string, spec connections.QuerySpec) (*dataframe.Frame, error) {
 	start := time.Now()
-	if err := EnsureReadOnlySQL(spec.SQL); err != nil {
+	sqlText, err := projectedReadOnlySQL(spec.SQL, spec.ProjectionHint)
+	if err != nil {
 		return nil, err
 	}
-	sqlText := applyProjectionHint(spec.SQL, spec.ProjectionHint)
 
 	db, err := m.open(cfgJSON, secret)
 	if err != nil {
@@ -85,6 +85,7 @@ func (m *MySQL) Execute(ctx context.Context, cfgJSON json.RawMessage, secret map
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
+	// codeql[go/sql-injection]: sqlText is validated as a single read-only statement and any projection hint is limited to identifier-only columns.
 	rows, err := db.QueryContext(ctx, sqlText, spec.Params...)
 	if err != nil {
 		return nil, fmt.Errorf("query: %w", err)
