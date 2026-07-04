@@ -77,6 +77,7 @@ func (h *Handlers) ExploreQuery(w http.ResponseWriter, r *http.Request) {
 		meta["error"] = err.Error()
 	} else {
 		meta["rowCount"] = result.NumRows()
+		h.observeFrameWarnings(result)
 	}
 	h.recordAudit(r, "connection.query", "connection", resourceID, outcome, meta)
 

@@ -22,6 +22,7 @@ type Metrics struct {
 	dbQueryDuration  *prometheus.HistogramVec
 	workflowRuns     *prometheus.CounterVec
 	workflowDuration *prometheus.HistogramVec
+	guardrailWarnings *prometheus.CounterVec
 }
 
 func NewMetrics() *Metrics {
@@ -64,6 +65,12 @@ func NewMetrics() *Metrics {
 			Help:      "Workflow execution duration in seconds.",
 			Buckets:   []float64{.05, .1, .5, 1, 2, 5, 10, 30, 60, 120},
 		}, []string{"outcome"}),
+		guardrailWarnings: promauto.With(reg).NewCounterVec(prometheus.CounterOpts{
+			Namespace: "data_explorer",
+			Subsystem: "guardrail",
+			Name:      "soft_warnings_total",
+			Help:      "Soft guardrail warnings emitted before a hard limit is reached.",
+		}, []string{"limit", "ratio"}),
 	}
 	return m
 }
@@ -84,4 +91,14 @@ func (m *Metrics) ObserveConnectorQuery(connectionType, outcome string, duration
 func (m *Metrics) ObserveWorkflowExecution(outcome string, duration time.Duration) {
 	m.workflowRuns.WithLabelValues(outcome).Inc()
 	m.workflowDuration.WithLabelValues(outcome).Observe(duration.Seconds())
+}
+
+func (m *Metrics) ObserveGuardrailSoftWarning(limit string, ratio float64) {
+	bucket := "0.80"
+	if ratio >= 0.95 {
+		bucket = "0.95"
+	} else if ratio >= 0.90 {
+		bucket = "0.90"
+	}
+	m.guardrailWarnings.WithLabelValues(limit, bucket).Inc()
 }

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/yesoreyeram/data-explorer/backend/internal/connections"
@@ -20,10 +22,13 @@ type Service struct {
 	repo        *Repository
 	engine      *Engine
 	connections *connections.Service
+	inFlight    atomic.Int64
+	activeMu    sync.Mutex
+	activeByWorkflow map[string]int
 }
 
 func NewService(repo *Repository, engine *Engine, connSvc *connections.Service) *Service {
-	return &Service{repo: repo, engine: engine, connections: connSvc}
+	return &Service{repo: repo, engine: engine, connections: connSvc, activeByWorkflow: make(map[string]int)}
 }
 
 func (s *Service) Create(ctx context.Context, name, description string, definition json.RawMessage, createdBy string) (domain.Workflow, error) {
@@ -103,11 +108,28 @@ func (s *Service) GetExecution(ctx context.Context, id string) (domain.WorkflowE
 	return s.repo.GetExecution(ctx, id)
 }
 
+func (s *Service) InFlightRuns() int {
+	return int(s.inFlight.Load())
+}
+
+func (s *Service) IsWorkflowInFlight(workflowID string) bool {
+	s.activeMu.Lock()
+	defer s.activeMu.Unlock()
+	return s.activeByWorkflow[workflowID] > 0
+}
+
+func (s *Service) RecordSkippedSchedule(ctx context.Context, workflowID, reason string) error {
+	return s.repo.CreateSkippedExecution(ctx, workflowID, "scheduler", reason)
+}
+
 // Execute runs the workflow's current definition end-to-end and persists a
 // WorkflowExecution record (with per-node timing/row counts) regardless of
 // whether the run succeeds or fails, so the execution history always
 // reflects reality.
 func (s *Service) Execute(ctx context.Context, workflowID, triggeredBy string) (domain.WorkflowExecution, *dataframe.Frame, error) {
+	s.inFlight.Add(1)
+	defer s.inFlight.Add(-1)
+
 	wf, err := s.repo.Get(ctx, workflowID)
 	if err != nil {
 		return domain.WorkflowExecution{}, nil, err
@@ -125,6 +147,17 @@ func (s *Service) Execute(ctx context.Context, workflowID, triggeredBy string) (
 	if err != nil {
 		return domain.WorkflowExecution{}, nil, err
 	}
+	s.activeMu.Lock()
+	s.activeByWorkflow[workflowID]++
+	s.activeMu.Unlock()
+	defer func() {
+		s.activeMu.Lock()
+		s.activeByWorkflow[workflowID]--
+		if s.activeByWorkflow[workflowID] <= 0 {
+			delete(s.activeByWorkflow, workflowID)
+		}
+		s.activeMu.Unlock()
+	}()
 
 	runCtx, cancel := context.WithTimeout(ctx, MaxExecutionDuration)
 	defer cancel()

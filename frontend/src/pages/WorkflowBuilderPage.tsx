@@ -23,6 +23,7 @@ import { DataFrameView } from "../components/DataFrameView";
 import { StatusBadge } from "../components/StatusBadge";
 import { PermissionGate } from "../components/PermissionGate";
 import { PERMISSIONS } from "../lib/permissions";
+import { useAuthStore } from "../state/authStore";
 import { IconClock, IconPlay } from "../components/icons";
 import { Modal } from "../components/Modal";
 import { FlowNode, type FlowNodeData } from "./workflow/FlowNode";
@@ -89,12 +90,43 @@ function flowToDefinition(nodes: Node<FlowNodeData>[], edges: Edge[]): WorkflowD
   return { nodes: wfNodes, edges: wfEdges };
 }
 
+function ScheduleSkipSparkline({ executions }: { executions: Awaited<ReturnType<typeof listWorkflowExecutions>> }) {
+  const skipped = executions.filter((ex) => ex.status === "skipped");
+  if (skipped.length === 0) {
+    return <p className="field-hint">No skipped scheduled runs in the recent execution window.</p>;
+  }
+  const buckets = Array.from({ length: 12 }, (_, i) => {
+    const start = Date.now() - (12 - i) * 2 * 60 * 60 * 1000;
+    const end = start + 2 * 60 * 60 * 1000;
+    return skipped.filter((ex) => {
+      const t = new Date(ex.startedAt).getTime();
+      return t >= start && t < end;
+    }).length;
+  });
+  const max = Math.max(...buckets, 1);
+  return (
+    <div className="field-hint" aria-label={`${skipped.length} skipped scheduled runs in recent history`}>
+      <div style={{ display: "flex", alignItems: "end", gap: 2, height: 28, marginBottom: 4 }} aria-hidden="true">
+        {buckets.map((n, i) => (
+          <span
+            // eslint-disable-next-line react/no-array-index-key
+            key={i}
+            style={{ width: 8, height: Math.max(2, (n / max) * 24), borderRadius: 2, background: n > 0 ? "var(--warning)" : "var(--border)" }}
+          />
+        ))}
+      </div>
+      {skipped.length} skipped scheduled run{skipped.length === 1 ? "" : "s"} recently; latest reason: {skipped[0]?.error || "overlap"}.
+    </div>
+  );
+}
+
 let nodeCounter = 0;
 
 export function WorkflowBuilderPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const canWriteWorkflows = useAuthStore((s) => s.hasPermission(PERMISSIONS.workflowsWrite));
 
   const { data: workflow, isLoading } = useQuery({
     queryKey: ["workflow", id],
@@ -213,6 +245,8 @@ export function WorkflowBuilderPage() {
     setRunning(true);
     setRunError(null);
     setRunResult(null);
+    const deadlineAt = new Date(Date.now() + 60_000).toISOString();
+    setNodes((nds) => nds.map((n) => ({ ...n, data: { ...n.data, runActive: true, deadlineAt, error: undefined, rowsOut: undefined } })));
     try {
       const res = await executeWorkflow(id);
       const resultsByNode = new Map((res.execution.nodeResults ?? []).map((r) => [r.nodeId, r]));
@@ -220,7 +254,7 @@ export function WorkflowBuilderPage() {
         nds.map((n) => {
           const r = resultsByNode.get(n.id);
           const data = n.data as unknown as FlowNodeData;
-          return { ...n, data: { ...data, rowsOut: r?.rowsOut, error: r?.error } as unknown as FlowNodeData };
+          return { ...n, data: { ...data, rowsOut: r?.rowsOut, rowCap: r?.rowCap, truncated: r?.truncated, warnings: r?.warnings, error: r?.error, runActive: false, deadlineAt: undefined } as unknown as FlowNodeData };
         }),
       );
       if (res.error) {
@@ -233,7 +267,25 @@ export function WorkflowBuilderPage() {
       setRunError(extractErrorMessage(err));
     } finally {
       setRunning(false);
+      setNodes((nds) => nds.map((n) => ({ ...n, data: { ...n.data, runActive: false, deadlineAt: undefined } })));
     }
+  }
+
+  function addFilterNodeAfterCappedResult() {
+    const source = nodes.find((n) => n.data.truncated || (typeof n.data.rowsOut === "number" && n.data.rowsOut >= (n.data.rowCap ?? 100_000) * 0.8)) ?? nodes[nodes.length - 1];
+    if (!source) return;
+    nodeCounter += 1;
+    const id = `filter-${Date.now()}-${nodeCounter}`;
+    const newNode: Node<FlowNodeData> = {
+      id,
+      type: "flowNode",
+      position: { x: source.position.x + 220, y: source.position.y },
+      data: { label: `filter ${nodeCounter}`, nodeType: "filter", config: { expression: "true" } } as unknown as FlowNodeData,
+    };
+    setNodes((nds) => [...nds, newNode]);
+    setEdges((eds) => [...eds, { id: `e-${source.id}-${id}`, source: source.id, target: id }]);
+    setSelectedNodeId(id);
+    setDirty(true);
   }
 
   if (isLoading || !workflow) {
@@ -368,6 +420,12 @@ export function WorkflowBuilderPage() {
             </div>
             <div className="card-body" style={{ flex: 1 }}>
               {executions.length === 0 && <p className="field-hint">No runs yet. Click Run to execute this workflow.</p>}
+              {executions.length > 0 && (
+                <div style={{ marginBottom: 12 }}>
+                  <strong style={{ fontSize: 12 }}>Scheduled skips</strong>
+                  <ScheduleSkipSparkline executions={executions} />
+                </div>
+              )}
               {executions.map((ex) => (
                 <div className="execution-row" key={ex.id}>
                   <div>
@@ -390,7 +448,7 @@ export function WorkflowBuilderPage() {
             <h3>Run output</h3>
           </div>
           <div className="card-body">
-            <DataFrameView frame={runResult} />
+            <DataFrameView frame={runResult} onAddFilterNode={canWriteWorkflows ? addFilterNodeAfterCappedResult : undefined} />
           </div>
         </div>
       )}

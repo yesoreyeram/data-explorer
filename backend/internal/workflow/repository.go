@@ -177,6 +177,15 @@ func (r *Repository) CreateExecution(ctx context.Context, workflowID, triggeredB
 	if err != nil {
 		return domain.WorkflowExecution{}, fmt.Errorf("insert execution: %w", err)
 	}
+
+	func (r *Repository) CreateSkippedExecution(ctx context.Context, workflowID, triggeredBy, reason string) error {
+		_, err := r.db.Exec(ctx,
+			`INSERT INTO workflow_executions (workflow_id, status, triggered_by, finished_at, error)
+			 VALUES ($1, $2, $3, now(), $4)`,
+			workflowID, domain.ExecutionStatusSkipped, triggeredBy, reason,
+		)
+		return err
+	}
 	return ex, nil
 }
 

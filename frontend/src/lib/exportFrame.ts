@@ -11,10 +11,10 @@ function csvCell(value: unknown): string {
   return s;
 }
 
-export function frameToCSV(frame: DataFrame): string {
+export function frameToCSV(frame: DataFrame, maxRows?: number): string {
   const columns = frame.schema.fields.map((f) => f.name);
   const lines = [columns.map(csvCell).join(",")];
-  for (const row of frame.rows) {
+  for (const row of typeof maxRows === "number" ? frame.rows.slice(0, maxRows) : frame.rows) {
     lines.push(columns.map((col) => csvCell(row[col])).join(","));
   }
   // CRLF is the CSV RFC's line ending and what spreadsheet apps expect.
@@ -35,11 +35,11 @@ function download(content: string, mimeType: string, filename: string) {
   URL.revokeObjectURL(url);
 }
 
-export function downloadFrame(frame: DataFrame, format: "csv" | "json") {
+export function downloadFrame(frame: DataFrame, format: "csv" | "json", maxRows?: number) {
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const base = frame.meta.name ? frame.meta.name.replace(/[^a-z0-9_-]+/gi, "_") : "query-result";
   if (format === "csv") {
-    download(frameToCSV(frame), "text/csv;charset=utf-8", `${base}-${stamp}.csv`);
+    download(frameToCSV(frame, maxRows), "text/csv;charset=utf-8", `${base}-${stamp}.csv`);
   } else {
     download(frameToJSON(frame), "application/json;charset=utf-8", `${base}-${stamp}.json`);
   }

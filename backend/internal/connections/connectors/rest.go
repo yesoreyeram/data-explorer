@@ -169,6 +169,10 @@ func (r *REST) Execute(ctx context.Context, cfgJSON json.RawMessage, secret map[
 			if page.Response.IsError() {
 				return nil, fmt.Errorf("upstream returned status %d: %s", page.Response.StatusCode, truncateForError(page.Response.Body))
 			}
+			if page.Response.Truncated {
+				return nil, connections.NewGuardrailError(connections.ErrCodeInvalidConfig, "HTTP response body bytes", httpclient.DefaultMaxResponseBytes, int64(len(page.Response.Body))+1, "Reduce page size, add filters, or narrow the request.")
+			}
+			warnings = appendBodyCapWarning(warnings, len(page.Response.Body))
 			appendPage(page.Data, spec.Pagination.ItemsPath)
 			if truncated {
 				break
@@ -182,10 +186,23 @@ func (r *REST) Execute(ctx context.Context, cfgJSON json.RawMessage, secret map[
 		if resp.IsError() {
 			return nil, fmt.Errorf("upstream returned status %d: %s", resp.StatusCode, truncateForError(resp.Body))
 		}
+		if resp.Truncated {
+			return nil, connections.NewGuardrailError(connections.ErrCodeInvalidConfig, "HTTP response body bytes", httpclient.DefaultMaxResponseBytes, int64(len(resp.Body))+1, "Reduce page size, add filters, or narrow the request.")
+		}
+		warnings = appendBodyCapWarning(warnings, len(resp.Body))
 		var decoded any
 		if len(resp.Body) > 0 {
 			if err := json.Unmarshal(resp.Body, &decoded); err != nil {
 				return nil, fmt.Errorf("response is not valid JSON: %w", err)
+			}
+
+			func appendBodyCapWarning(warnings []string, bytesRead int) []string {
+				const softRatio = 0.8
+				threshold := int(float64(httpclient.DefaultMaxResponseBytes) * softRatio)
+				if bytesRead < threshold {
+					return warnings
+				}
+				return append(warnings, fmt.Sprintf("Response body is %d bytes, at least 80%% of the %d byte cap. Narrow the request before it reaches the hard limit.", bytesRead, httpclient.DefaultMaxResponseBytes))
 			}
 		}
 		appendPage(decoded, "")

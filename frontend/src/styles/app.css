@@ -869,9 +869,17 @@ table.data-table tbody tr:last-child td {
 }
 
 .flow-node-rows {
-  color: var(--success);
+  color: var(--text-secondary);
   font-size: 10px;
   font-weight: 600;
+}
+
+.flow-node-rows-warning {
+  color: var(--warning);
+}
+
+.flow-node-rows-danger {
+  color: var(--danger);
 }
 
 .flow-node-error {

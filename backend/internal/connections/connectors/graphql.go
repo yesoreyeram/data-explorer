@@ -137,6 +137,10 @@ func (g *GraphQL) Execute(ctx context.Context, cfgJSON json.RawMessage, secret m
 			if page.Response.IsError() {
 				return nil, fmt.Errorf("upstream returned status %d: %s", page.Response.StatusCode, truncateForError(page.Response.Body))
 			}
+			if page.Response.Truncated {
+				return nil, connections.NewGuardrailError(connections.ErrCodeInvalidConfig, "HTTP response body bytes", httpclient.DefaultMaxResponseBytes, int64(len(page.Response.Body))+1, "Reduce page size, add filters, or narrow the request.")
+			}
+			warnings = appendBodyCapWarning(warnings, len(page.Response.Body))
 			if err := appendPage(page.Data); err != nil {
 				return nil, err
 			}
@@ -152,6 +156,10 @@ func (g *GraphQL) Execute(ctx context.Context, cfgJSON json.RawMessage, secret m
 		if resp.IsError() {
 			return nil, fmt.Errorf("upstream returned status %d: %s", resp.StatusCode, truncateForError(resp.Body))
 		}
+		if resp.Truncated {
+			return nil, connections.NewGuardrailError(connections.ErrCodeInvalidConfig, "HTTP response body bytes", httpclient.DefaultMaxResponseBytes, int64(len(resp.Body))+1, "Reduce page size, add filters, or narrow the request.")
+		}
+		warnings = appendBodyCapWarning(warnings, len(resp.Body))
 		var decoded any
 		if err := json.Unmarshal(resp.Body, &decoded); err != nil {
 			return nil, fmt.Errorf("response is not valid JSON: %w", err)

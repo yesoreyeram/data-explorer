@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -11,6 +13,7 @@ import (
 	"github.com/yesoreyeram/data-explorer/backend/internal/connections"
 	"github.com/yesoreyeram/data-explorer/backend/internal/domain"
 	"github.com/yesoreyeram/data-explorer/backend/internal/platform/httpx"
+	"github.com/yesoreyeram/data-explorer/backend/pkg/dataframe"
 )
 
 func (h *Handlers) ListConnections(w http.ResponseWriter, r *http.Request) {
@@ -127,7 +130,7 @@ func (h *Handlers) TestConnection(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if errors.Is(err, connections.ErrRateLimited) {
-			httpx.WriteError(w, http.StatusTooManyRequests, "rate_limited", err.Error())
+			httpx.WriteRateLimit(w, connections.DefaultConnectionRateBurst, connections.DefaultConnectionRateBurst, 2*time.Second, time.Second, "This connection is being called too frequently. Slow down or retry after the indicated delay.")
 			return
 		}
 		var he *connections.HealthError
@@ -172,6 +175,7 @@ func (h *Handlers) QueryConnection(w http.ResponseWriter, r *http.Request) {
 		meta["error"] = err.Error()
 	} else {
 		meta["rowCount"] = result.NumRows()
+		h.observeFrameWarnings(result)
 	}
 	h.recordAudit(r, "connection.query", "connection", id, outcome, meta)
 
@@ -180,6 +184,17 @@ func (h *Handlers) QueryConnection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, result)
+}
+
+func (h *Handlers) observeFrameWarnings(frame *dataframe.Frame) {
+	if h.Metrics == nil || frame == nil {
+		return
+	}
+	for _, warning := range frame.Meta.Warnings {
+		if strings.Contains(warning, "80%") && strings.Contains(warning, "cap") {
+			h.Metrics.ObserveGuardrailSoftWarning("http_response_body_bytes", 0.8)
+		}
+	}
 }
 
 // writeQueryError maps a query/test execution error to an HTTP response,
@@ -197,7 +212,7 @@ func writeQueryError(w http.ResponseWriter, err error) {
 		return
 	}
 	if errors.Is(err, connections.ErrRateLimited) {
-		httpx.WriteError(w, http.StatusTooManyRequests, "rate_limited", err.Error())
+		httpx.WriteRateLimit(w, connections.DefaultConnectionRateBurst, connections.DefaultConnectionRateBurst, 2*time.Second, time.Second, "This connection is being called too frequently. Slow down or retry after the indicated delay.")
 		return
 	}
 	var he *connections.HealthError
