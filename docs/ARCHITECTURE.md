@@ -155,13 +155,15 @@ bounds). The workflow `join` and `aggregate` nodes
 adapters over `dataframe.Join`/`Frame.GroupBy` - the actual algorithms live
 entirely in the standalone package, not duplicated per node.
 
-Two guardrails live at this layer specifically because they're about data
-*integrity* rather than any one caller's business policy (see
-`pkg/dataframe/guardrails.go`): `TruncateCells` clips any single string cell
-over 256KB (applied centrally in `connections.Service.Query`, so it's
-uniform across every connector), and `LimitRows` caps a frame's row count
-and marks `Meta.Truncated` (applied per-node by the workflow engine - see
-below).
+Several guardrails live at this layer specifically because they're about
+data *integrity* rather than any one caller's business policy (see
+`pkg/dataframe/guardrails.go`): `LimitRows` caps a frame's row count and
+marks `Meta.Truncated`; `LimitColumns` bounds schema width; and
+`TruncateCellsByType` clips oversized string/bytes cells without dropping the
+whole result. The same package now also carries lightweight dictionary
+metadata for high-cardinality string reuse plus an additive columnar snapshot
+format (`columnar.go`) used by newer execution paths that want tighter
+memory layouts without changing the JSON wire contract.
 
 ## httpclient: the outbound HTTP layer
 
@@ -383,7 +385,10 @@ to the saved-connection mode only - restoring a temporary connection's many
 non-secret fields for marginal benefit wasn't worth the complexity, so that
 mode isn't remembered - and **CSV/JSON export** on `DataFrameView` itself
 (`lib/exportFrame.ts`), which benefits every screen that renders a frame,
-not just Explore.
+not just Explore. `DataFrameView` now also supports a chart/table/split
+presentation with locally-persisted chart settings and a "save chart"
+action, letting the same result frame power quick visual inspection and the
+dashboard's saved-chart gallery without any extra backend storage.
 
 ## Workflow execution engine
 
@@ -471,8 +476,10 @@ A standard Vite + React + TypeScript SPA:
 - `src/api/` - typed fetch wrappers (axios) per resource, plus `client.ts`
   which centralizes auth header injection and silent access-token refresh.
 - `src/state/` - small Zustand stores: `authStore` (session, permissions),
-  `themeStore` (light/dark/system, persisted to `localStorage`), and
-  `sidebarStore` (collapsed/expanded, persisted the same way).
+  `themeStore` (light/dark/system, persisted to `localStorage`),
+  `sidebarStore` (collapsed/expanded), `navigationStore` (favorites,
+  command-palette/recent-activity UI state, recent routes), and
+  `savedChartsStore` (local dashboard chart snapshots).
 - `src/index.css` - the design **tokens**: CSS custom properties for color,
   spacing, radius, and the two fixed layout dimensions (sidebar width,
   topbar height). The palette is deliberately near-monochrome - every
@@ -492,19 +499,21 @@ A standard Vite + React + TypeScript SPA:
   inconsistent. New UI should use these instead of raw class strings; see
   the developer guide for the convention.
 - `src/components/` - shared UI beyond the primitives above: layout shell
-  (`layout/AppShell.tsx`, `Sidebar.tsx` - collapsible, with a user/logout
-  footer, `Topbar.tsx` - shows the current section title), `DataTable`,
-  `Modal`, `PermissionGate`. `DataFrameView` renders a dataframe's schema
-  (typed column badges), rows, and metadata (row/col counts, timing,
-  source, lineage, truncation, warnings) as one unit plus a CSV/JSON export
-  action (`lib/exportFrame.ts`), and `PaginationFields`/`QuerySpecFields`
+  (`layout/AppShell.tsx`, `Sidebar.tsx` - collapsible, favorites-aware,
+  with a user/logout footer, `Topbar.tsx` - breadcrumbs, quick-search entry,
+  favorite toggle, recent-activity drawer trigger, `CommandPalette.tsx`),
+  `DataTable`, `Modal`, `PermissionGate`. `DataFrameView` renders a
+  dataframe's schema (typed column badges), rows, metadata (row/col counts,
+  timing, source, lineage, truncation, warnings), a chart builder, and
+  CSV/JSON export actions as one unit; `PaginationFields`/`QuerySpecFields`
   are the pagination/query-shape config forms shared across the ad-hoc query
   modal, the Explore page, and the workflow source node.
 - `src/lib/` - cross-page logic with no UI of its own: `connectionFields.ts`
   (the `useConnectionFields` hook backing both `ConnectionFormModal` and
   Explore's temporary-connection form), `querySpec.ts` (the query-authoring
-  form state + `buildQuerySpec`/`summarizeQuery`), `exportFrame.ts`,
-  `exploreHistory.ts`, `permissions.ts`.
+  form state + `buildQuerySpec`/`summarizeQuery`), `navigation.ts`
+  (page/breadcrumb metadata), `exportFrame.ts`, `exploreHistory.ts`,
+  `permissions.ts`.
 - `src/pages/connections/AuthTypeFields.tsx` - the per-auth-type config form
   (10 schemes) shared by the connection create/edit modal, mirroring
   `pkg/httpclient`'s `Authenticator` matrix field-for-field.

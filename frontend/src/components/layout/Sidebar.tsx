@@ -1,17 +1,40 @@
 import { NavLink, useNavigate } from "react-router-dom";
 
-import { PermissionGate } from "../PermissionGate";
 import { PERMISSIONS } from "../../lib/permissions";
+import { NAV_ITEMS } from "../../lib/navigation";
 import { useAuthStore } from "../../state/authStore";
+import { useNavigationStore } from "../../state/navigationStore";
 import { useSidebarStore } from "../../state/sidebarStore";
-import { IconDatabase, IconHome, IconLogout, IconPanelLeft, IconSearch, IconShield, IconUsers, IconWorkflow } from "../icons";
+import { PermissionGate } from "../PermissionGate";
+import { IconDatabase, IconHome, IconLogout, IconPanelLeft, IconSearch, IconShield, IconStar, IconUsers, IconWorkflow } from "../icons";
 import { IconButton } from "../ui";
 
 const linkClass = ({ isActive }: { isActive: boolean }) => "nav-link" + (isActive ? " active" : "");
 
+function navIcon(href: string) {
+  switch (href) {
+    case "/":
+      return <IconHome className="icon" />;
+    case "/explore":
+      return <IconSearch className="icon" />;
+    case "/connections":
+      return <IconDatabase className="icon" />;
+    case "/workflows":
+      return <IconWorkflow className="icon" />;
+    case "/audit-log":
+      return <IconShield className="icon" />;
+    case "/users":
+      return <IconUsers className="icon" />;
+    default:
+      return <IconStar className="icon" />;
+  }
+}
+
 export function Sidebar() {
   const collapsed = useSidebarStore((s) => s.collapsed);
   const toggle = useSidebarStore((s) => s.toggle);
+  const favorites = useNavigationStore((s) => s.favorites);
+  const hasPermission = useAuthStore((s) => s.hasPermission);
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
   const navigate = useNavigate();
@@ -22,6 +45,7 @@ export function Sidebar() {
   }
 
   const initial = user?.displayName?.trim()?.[0]?.toUpperCase() ?? "?";
+  const favoriteItems = NAV_ITEMS.filter((item) => favorites.includes(item.href) && (!item.permission || hasPermission(item.permission)));
 
   return (
     <aside className={"layout-sidebar" + (collapsed ? " sidebar-collapsed" : "")}>
@@ -31,6 +55,17 @@ export function Sidebar() {
       </div>
 
       <nav className="sidebar-nav">
+        {favoriteItems.length > 0 && (
+          <>
+            <div className="nav-section">Favorites</div>
+            {favoriteItems.map((item) => (
+              <NavLink key={item.href} to={item.href} end={item.href === "/"} className={linkClass} title={item.title}>
+                {navIcon(item.href)} <span>{item.title}</span>
+              </NavLink>
+            ))}
+          </>
+        )}
+
         <div className="nav-section">Workspace</div>
         <NavLink to="/" end className={linkClass} title="Dashboard">
           <IconHome className="icon" /> <span>Dashboard</span>
@@ -79,11 +114,7 @@ export function Sidebar() {
       </div>
 
       <div className="sidebar-toggle-row">
-        <IconButton
-          label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          onClick={toggle}
-          className="sidebar-collapse-toggle"
-        >
+        <IconButton label={collapsed ? "Expand sidebar" : "Collapse sidebar"} onClick={toggle} className="sidebar-collapse-toggle">
           <IconPanelLeft width={14} height={14} />
         </IconButton>
       </div>

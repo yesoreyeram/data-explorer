@@ -5,12 +5,14 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/yesoreyeram/data-explorer/backend/internal/audit"
 	"github.com/yesoreyeram/data-explorer/backend/internal/domain"
 	"github.com/yesoreyeram/data-explorer/backend/internal/platform/httpx"
+	"github.com/yesoreyeram/data-explorer/backend/internal/quota"
 	"github.com/yesoreyeram/data-explorer/backend/internal/workflow"
 )
 
@@ -130,6 +132,14 @@ func (h *Handlers) DeleteWorkflow(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) ExecuteWorkflow(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	p := principalOrEmpty(r)
+	if h.Quotas != nil {
+		quotaResult := h.Quotas.Check(p.UserID, p.Roles, quota.KindWorkflow, time.Now())
+		if !quotaResult.Allowed {
+			h.recordGuardrailTrip(r, "quota", map[string]any{"kind": "workflow", "quota": quotaResult.Quota, "used": quotaResult.Used})
+			httpx.WriteRateLimit(w, quotaResult.Quota, quotaResult.Used, quotaResult.Window, quotaResult.RetryAfter, "Workflow execution quota exceeded for your role. Retry after the indicated delay.")
+			return
+		}
+	}
 
 	execution, output, err := h.Workflows.Execute(r.Context(), id, p.UserID)
 
@@ -146,6 +156,9 @@ func (h *Handlers) ExecuteWorkflow(w http.ResponseWriter, r *http.Request) {
 	h.recordAudit(r, "workflow.execute", "workflow", id, outcome, meta)
 
 	if err != nil {
+		for _, kind := range guardrailTripKindsFromError(err) {
+			h.recordGuardrailTrip(r, kind, map[string]any{"scope": "workflow"})
+		}
 		if errors.Is(err, workflow.ErrNotFound) {
 			httpx.WriteError(w, http.StatusNotFound, "not_found", "workflow not found")
 			return
@@ -155,6 +168,9 @@ func (h *Handlers) ExecuteWorkflow(w http.ResponseWriter, r *http.Request) {
 		// this is an expected, recorded outcome, not a server bug.
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"execution": execution, "error": err.Error()})
 		return
+	}
+	for _, kind := range guardrailTripKindsFromFrameWarnings(output.Meta.Warnings) {
+		h.recordGuardrailTrip(r, kind, map[string]any{"scope": "workflow"})
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"execution": execution, "output": output})

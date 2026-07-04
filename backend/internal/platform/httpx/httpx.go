@@ -5,8 +5,10 @@ package httpx
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -14,24 +16,74 @@ import (
 	"time"
 )
 
-// MaxRequestBodyBytes bounds every JSON request body decoded through
-// DecodeJSON, protecting the server from a malicious or buggy client
-// exhausting memory on a single request.
 const MaxRequestBodyBytes = 1 << 20 // 1MB
 
 var ErrPayloadTooLarge = errors.New("httpx: request body exceeds the maximum allowed size")
 
 type ErrorBody struct {
 	Error struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
-		// Remediation/Detail are optional - populated when the error carries a
-		// concrete next step and/or underlying technical detail (see
-		// connections.HealthError) beyond the plain code+message every error
-		// response has.
+		Code        string `json:"code"`
+		Message     string `json:"message"`
 		Remediation string `json:"remediation,omitempty"`
 		Detail      string `json:"detail,omitempty"`
 	} `json:"error"`
+}
+
+type countingReadCloser struct {
+	io.ReadCloser
+	n int64
+}
+
+func (c *countingReadCloser) Read(p []byte) (int, error) {
+	n, err := c.ReadCloser.Read(p)
+	c.n += int64(n)
+	return n, err
+}
+
+type LimitedDecompressReader struct {
+	source       *countingReadCloser
+	gzip         *gzip.Reader
+	originalSize int64
+	ratio        int64
+	produced     int64
+}
+
+func NewLimitedDecompressReader(body io.ReadCloser, originalSize int64, ratio int) (*LimitedDecompressReader, error) {
+	if ratio <= 0 {
+		ratio = 100
+	}
+	source := &countingReadCloser{ReadCloser: body}
+	zr, err := gzip.NewReader(source)
+	if err != nil {
+		_ = body.Close()
+		return nil, err
+	}
+	return &LimitedDecompressReader{source: source, gzip: zr, originalSize: originalSize, ratio: int64(ratio)}, nil
+}
+
+func (r *LimitedDecompressReader) Read(p []byte) (int, error) {
+	n, err := r.gzip.Read(p)
+	r.produced += int64(n)
+	compressed := r.originalSize
+	if r.source.n > compressed {
+		compressed = r.source.n
+	}
+	if compressed <= 0 {
+		compressed = 1
+	}
+	if r.produced > compressed*r.ratio {
+		return n, fmt.Errorf("gzip payload exceeded the %d:1 decompression ratio limit", r.ratio)
+	}
+	return n, err
+}
+
+func (r *LimitedDecompressReader) Close() error {
+	gzErr := r.gzip.Close()
+	srcErr := r.source.Close()
+	if gzErr != nil {
+		return gzErr
+	}
+	return srcErr
 }
 
 func WriteJSON(w http.ResponseWriter, status int, v any) {
@@ -46,9 +98,6 @@ func WriteError(w http.ResponseWriter, status int, code, message string) {
 	WriteErrorDetailed(w, status, code, message, "", "")
 }
 
-// WriteErrorDetailed is WriteError plus an actionable remediation step and/or
-// underlying technical detail, for errors that carry more than a bare
-// code+message (see connections.HealthError).
 func WriteErrorDetailed(w http.ResponseWriter, status int, code, message, remediation, detail string) {
 	var body ErrorBody
 	body.Error.Code = code
@@ -82,9 +131,6 @@ func WriteRateLimit(w http.ResponseWriter, quota, used int, window, retryAfter t
 	})
 }
 
-// WriteDecodeError maps a DecodeJSON error to the appropriate response: 413
-// for a request that hit the size guardrail, 400 for anything else
-// (malformed JSON, unknown fields, ...).
 func WriteDecodeError(w http.ResponseWriter, err error) {
 	if errors.Is(err, ErrPayloadTooLarge) {
 		WriteError(w, http.StatusRequestEntityTooLarge, "payload_too_large", "request body exceeds the maximum allowed size")
@@ -93,10 +139,6 @@ func WriteDecodeError(w http.ResponseWriter, err error) {
 	WriteError(w, http.StatusBadRequest, "invalid_request", "malformed request body")
 }
 
-// DecodeJSON reads and decodes a JSON body with a size cap (MaxRequestBodyBytes)
-// to prevent a malicious or buggy client from exhausting server memory on
-// one request. A body at or over the cap fails fast with ErrPayloadTooLarge
-// rather than a confusing "unexpected EOF" from a silently truncated decode.
 func DecodeJSON(r *http.Request, v any) error {
 	limited := io.LimitReader(r.Body, MaxRequestBodyBytes+1)
 	body, err := io.ReadAll(limited)

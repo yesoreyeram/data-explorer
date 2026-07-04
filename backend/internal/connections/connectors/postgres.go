@@ -69,6 +69,7 @@ func (p *Postgres) Execute(ctx context.Context, cfgJSON json.RawMessage, secret 
 	if err := EnsureReadOnlySQL(spec.SQL); err != nil {
 		return nil, err
 	}
+	sqlText := applyProjectionHint(spec.SQL, spec.ProjectionHint)
 
 	dsn, err := p.dsn(cfgJSON, secret)
 	if err != nil {
@@ -90,7 +91,7 @@ func (p *Postgres) Execute(ctx context.Context, cfgJSON json.RawMessage, secret 
 		return nil, fmt.Errorf("set statement_timeout: %w", err)
 	}
 
-	rows, err := conn.Query(ctx, spec.SQL, spec.Params...)
+	rows, err := conn.Query(ctx, sqlText, spec.Params...)
 	if err != nil {
 		return nil, fmt.Errorf("query: %w", err)
 	}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/yesoreyeram/data-explorer/backend/internal/config"
 	"github.com/yesoreyeram/data-explorer/backend/pkg/dataframe"
 )
 
@@ -32,7 +33,7 @@ func newTestService(t *testing.T, connType string, connector Connector) *Service
 	t.Helper()
 	registry := NewRegistry()
 	registry.Register(connType, connector)
-	return NewService(nil, nil, registry)
+	return NewService(nil, nil, registry, config.DefaultGuardrailsConfig())
 }
 
 func TestQueryAdhocStampsMetadataAndTruncates(t *testing.T) {

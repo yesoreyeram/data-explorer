@@ -74,6 +74,7 @@ func (m *MySQL) Execute(ctx context.Context, cfgJSON json.RawMessage, secret map
 	if err := EnsureReadOnlySQL(spec.SQL); err != nil {
 		return nil, err
 	}
+	sqlText := applyProjectionHint(spec.SQL, spec.ProjectionHint)
 
 	db, err := m.open(cfgJSON, secret)
 	if err != nil {
@@ -84,7 +85,7 @@ func (m *MySQL) Execute(ctx context.Context, cfgJSON json.RawMessage, secret map
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	rows, err := db.QueryContext(ctx, spec.SQL, spec.Params...)
+	rows, err := db.QueryContext(ctx, sqlText, spec.Params...)
 	if err != nil {
 		return nil, fmt.Errorf("query: %w", err)
 	}

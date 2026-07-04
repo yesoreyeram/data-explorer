@@ -69,3 +69,22 @@ func RequirePermission(permission string) func(http.Handler) http.Handler {
 		})
 	}
 }
+
+func RequireRole(role string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			principal, ok := rbac.FromContext(r.Context())
+			if !ok {
+				httpx.WriteError(w, http.StatusUnauthorized, "unauthenticated", "a valid access token is required")
+				return
+			}
+			for _, candidate := range principal.Roles {
+				if candidate == role {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+			httpx.WriteError(w, http.StatusForbidden, "forbidden", "you do not have permission to perform this action")
+		})
+	}
+}

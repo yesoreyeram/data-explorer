@@ -8,21 +8,21 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yesoreyeram/data-explorer/backend/internal/config"
 	"github.com/yesoreyeram/data-explorer/backend/internal/connections"
+	"github.com/yesoreyeram/data-explorer/backend/internal/platform/safejson"
 	"github.com/yesoreyeram/data-explorer/backend/pkg/dataframe"
 	"github.com/yesoreyeram/data-explorer/backend/pkg/httpclient"
 )
 
-// GraphQLConfig is the non-secret configuration for a GraphQL connection.
-// Auth is configured via the embedded AuthConfig, identical to REST.
 type GraphQLConfig struct {
 	Endpoint string `json:"endpoint"`
 	AuthConfig
 }
 
-type GraphQL struct{}
+type GraphQL struct{ guardrails config.GuardrailsConfig }
 
-func NewGraphQL() *GraphQL { return &GraphQL{} }
+func NewGraphQL(guardrails config.GuardrailsConfig) *GraphQL { return &GraphQL{guardrails: guardrails} }
 
 func (g *GraphQL) parseConfig(cfgJSON json.RawMessage) (GraphQLConfig, error) {
 	var cfg GraphQLConfig
@@ -47,11 +47,7 @@ func (g *GraphQL) client(ctx context.Context, cfg GraphQLConfig, secret map[stri
 	if err != nil {
 		return nil, fmt.Errorf("configure authentication: %w", err)
 	}
-	return httpclient.New(httpclient.Config{
-		Timeout: 30 * time.Second,
-		Auth:    auth,
-		Retry:   httpclient.DefaultRetryPolicy,
-	}), nil
+	return httpclient.New(httpclient.Config{Timeout: g.guardrails.NodeTimeout, MaxResponseBytes: g.guardrails.MaxBodyBytes, MaxRedirects: g.guardrails.MaxRedirects, DecompressRatio: g.guardrails.DecompressRatio, Auth: auth, Retry: httpclient.DefaultRetryPolicy}), nil
 }
 
 func (g *GraphQL) Test(ctx context.Context, cfgJSON json.RawMessage, secret map[string]string) error {
@@ -82,7 +78,6 @@ func (g *GraphQL) Execute(ctx context.Context, cfgJSON json.RawMessage, secret m
 	if spec.GraphQL == nil || spec.GraphQL.Query == "" {
 		return nil, fmt.Errorf("graphql query is required")
 	}
-
 	cfg, err := g.parseConfig(cfgJSON)
 	if err != nil {
 		return nil, err
@@ -91,21 +86,14 @@ func (g *GraphQL) Execute(ctx context.Context, cfgJSON json.RawMessage, secret m
 	if err != nil {
 		return nil, err
 	}
-
-	req, err := httpclient.NewGraphQLRequest(ctx, cfg.Endpoint, httpclient.GraphQLRequest{
-		Query:         spec.GraphQL.Query,
-		Variables:     spec.GraphQL.Variables,
-		OperationName: spec.GraphQL.OperationName,
-	})
+	req, err := httpclient.NewGraphQLRequest(ctx, cfg.Endpoint, httpclient.GraphQLRequest{Query: spec.GraphQL.Query, Variables: spec.GraphQL.Variables, OperationName: spec.GraphQL.OperationName})
 	if err != nil {
 		return nil, err
 	}
-
 	limit := connections.EffectiveRowLimit(spec.RowLimit)
 	frame := dataframe.New(nil)
 	truncated := false
 	var warnings []string
-
 	appendPage := func(decoded any) error {
 		if errs := httpclient.ParseGraphQLErrors(decoded); len(errs) > 0 {
 			return fmt.Errorf("graphql error: %s", errs.Error())
@@ -120,13 +108,19 @@ func (g *GraphQL) Execute(ctx context.Context, cfgJSON json.RawMessage, secret m
 		}
 		return nil
 	}
-
+	decodeBody := func(body []byte) (any, error) {
+		var decoded any
+		if err := safejson.Unmarshal(body, &decoded, g.guardrails.JSONMaxDepth, g.guardrails.JSONMaxElements); err != nil {
+			return nil, fmt.Errorf("response is not valid bounded JSON: %w", err)
+		}
+		return decoded, nil
+	}
 	if spec.Pagination != nil && spec.Pagination.Strategy != "" && spec.Pagination.Strategy != "none" {
 		paginator, err := buildGraphQLPaginator(spec.GraphQL.DataPath, spec.Pagination)
 		if err != nil {
 			return nil, err
 		}
-		result, err := client.DoPaginated(ctx, req, paginator, maxPagesOf(spec.Pagination))
+		result, err := client.DoPaginated(ctx, req, paginator, maxPagesOf(spec.Pagination, g.guardrails.MaxPages))
 		if err != nil {
 			return nil, fmt.Errorf("paginated request failed: %w", err)
 		}
@@ -138,10 +132,14 @@ func (g *GraphQL) Execute(ctx context.Context, cfgJSON json.RawMessage, secret m
 				return nil, fmt.Errorf("upstream returned status %d: %s", page.Response.StatusCode, truncateForError(page.Response.Body))
 			}
 			if page.Response.Truncated {
-				return nil, connections.NewGuardrailError(connections.ErrCodeInvalidConfig, "HTTP response body bytes", httpclient.DefaultMaxResponseBytes, int64(len(page.Response.Body))+1, "Reduce page size, add filters, or narrow the request.")
+				return nil, connections.NewGuardrailError(connections.ErrCodeInvalidConfig, "HTTP response body bytes", g.guardrails.MaxBodyBytes, int64(len(page.Response.Body))+1, "Reduce page size, add filters, or narrow the request.")
 			}
 			warnings = appendBodyCapWarning(warnings, len(page.Response.Body))
-			if err := appendPage(page.Data); err != nil {
+			decoded, err := decodeBody(page.Response.Body)
+			if err != nil {
+				return nil, err
+			}
+			if err := appendPage(decoded); err != nil {
 				return nil, err
 			}
 			if truncated {
@@ -157,37 +155,27 @@ func (g *GraphQL) Execute(ctx context.Context, cfgJSON json.RawMessage, secret m
 			return nil, fmt.Errorf("upstream returned status %d: %s", resp.StatusCode, truncateForError(resp.Body))
 		}
 		if resp.Truncated {
-			return nil, connections.NewGuardrailError(connections.ErrCodeInvalidConfig, "HTTP response body bytes", httpclient.DefaultMaxResponseBytes, int64(len(resp.Body))+1, "Reduce page size, add filters, or narrow the request.")
+			return nil, connections.NewGuardrailError(connections.ErrCodeInvalidConfig, "HTTP response body bytes", g.guardrails.MaxBodyBytes, int64(len(resp.Body))+1, "Reduce page size, add filters, or narrow the request.")
 		}
 		warnings = appendBodyCapWarning(warnings, len(resp.Body))
-		var decoded any
-		if err := json.Unmarshal(resp.Body, &decoded); err != nil {
-			return nil, fmt.Errorf("response is not valid JSON: %w", err)
+		decoded, err := decodeBody(resp.Body)
+		if err != nil {
+			return nil, err
 		}
 		if err := appendPage(decoded); err != nil {
 			return nil, err
 		}
 	}
-
-	frame.SetMeta(dataframe.Metadata{
-		SourceType:  "graphql",
-		GeneratedAt: start,
-		DurationMs:  time.Since(start).Milliseconds(),
-		Truncated:   truncated,
-		Warnings:    warnings,
-	})
+	frame.LimitColumns(g.guardrails.MaxColumns)
+	frame.SetMeta(dataframe.Metadata{SourceType: "graphql", GeneratedAt: start, DurationMs: time.Since(start).Milliseconds(), Truncated: truncated || frame.Meta.Truncated, Warnings: warnings})
 	return frame, nil
 }
 
-// extractGraphQLRows unwraps a GraphQL response at dataPath into rows,
-// understanding the Relay Cursor Connections convention (`edges { node }`)
-// as well as a plain array or a single object result.
 func extractGraphQLRows(decoded any, dataPath string) []map[string]any {
 	node, ok := httpclient.JSONPath(decoded, dataPath)
 	if !ok || node == nil {
 		return nil
 	}
-
 	if arr, ok := node.([]any); ok {
 		rows := make([]map[string]any, 0, len(arr))
 		for _, item := range arr {
@@ -195,12 +183,10 @@ func extractGraphQLRows(decoded any, dataPath string) []map[string]any {
 		}
 		return rows
 	}
-
 	obj, ok := node.(map[string]any)
 	if !ok {
 		return []map[string]any{toRowMap(node)}
 	}
-
 	if edges, ok := obj["edges"].([]any); ok {
 		rows := make([]map[string]any, 0, len(edges))
 		for _, edge := range edges {
@@ -217,6 +203,5 @@ func extractGraphQLRows(decoded any, dataPath string) []map[string]any {
 		}
 		return rows
 	}
-
 	return []map[string]any{obj}
 }

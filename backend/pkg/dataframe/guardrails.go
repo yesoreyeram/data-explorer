@@ -1,46 +1,42 @@
 package dataframe
 
-// This file holds generic, data-integrity guardrails that belong at the
-// data-structure level (as opposed to business-policy guardrails like "a
-// connection may return at most N rows", which live with the caller that
-// knows the policy - see internal/connections.MaxRowLimit). What belongs
-// here is protection against a single Frame becoming pathological
-// regardless of who built it: an unbounded cell, or more rows than can be
-// reasonably held/serialized at once.
+const (
+	DefaultMaxCellBytes       = 256 * 1024
+	DefaultMaxColumns         = 512
+	DefaultMaxStringCellBytes = 1 * 1024 * 1024
+	DefaultMaxBytesCellBytes  = 5 * 1024 * 1024
+)
 
-// DefaultMaxCellBytes bounds how large a single string cell's value may be
-// before TruncateCells clips it. REST/GraphQL responses in particular can
-// contain a single huge text/blob field that would otherwise dominate
-// memory and JSON payload size disproportionately to the rest of the row.
-const DefaultMaxCellBytes = 256 * 1024 // 256KB
-
-// TruncateCells clips any string cell longer than maxBytes (in place) and
-// returns how many cells were affected. A maxBytes <= 0 disables the guard.
 func (f *Frame) TruncateCells(maxBytes int) int {
-	if maxBytes <= 0 {
-		return 0
-	}
+	return f.TruncateCellsByType(maxBytes, maxBytes)
+}
+
+func (f *Frame) TruncateCellsByType(maxStringBytes, maxBytesBytes int) int {
 	affected := 0
 	for name, col := range f.cols {
 		for i, v := range col {
-			s, ok := v.(string)
-			if !ok || len(s) <= maxBytes {
-				continue
+			switch value := v.(type) {
+			case string:
+				if maxStringBytes > 0 && len(value) > maxStringBytes {
+					col[i] = value[:maxStringBytes] + "…(truncated)"
+					affected++
+				}
+			case []byte:
+				if maxBytesBytes > 0 && len(value) > maxBytesBytes {
+					clipped := append([]byte(nil), value[:maxBytesBytes]...)
+					col[i] = clipped
+					affected++
+				}
 			}
-			col[i] = s[:maxBytes] + "…(truncated)"
-			affected++
 		}
 		f.cols[name] = col
 	}
 	if affected > 0 {
-		f.Meta = f.Meta.WithWarning("%d cell(s) exceeded %d bytes and were truncated", affected, maxBytes)
+		f.Meta = f.Meta.WithWarning("%d cell(s) exceeded per-type cell limits and were truncated", affected)
 	}
 	return affected
 }
 
-// LimitRows truncates the frame to at most maxRows (keeping the first
-// maxRows rows) and marks Meta.Truncated if it had to cut anything. A
-// maxRows <= 0 or a frame already within the limit is a no-op.
 func (f *Frame) LimitRows(maxRows int) *Frame {
 	if maxRows <= 0 || f.numRows <= maxRows {
 		return f
@@ -51,5 +47,26 @@ func (f *Frame) LimitRows(maxRows int) *Frame {
 	f.numRows = maxRows
 	f.Meta.Truncated = true
 	f.Meta.RowCount = maxRows
+	return f
+}
+
+func (f *Frame) LimitColumns(maxCols int) *Frame {
+	if maxCols <= 0 || len(f.schema.Fields) <= maxCols {
+		return f
+	}
+	kept := make(map[string]struct{}, maxCols)
+	for _, field := range f.schema.Fields[:maxCols] {
+		kept[field.Name] = struct{}{}
+	}
+	for name := range f.cols {
+		if _, ok := kept[name]; !ok {
+			delete(f.cols, name)
+			delete(f.dictCols, name)
+		}
+	}
+	f.schema.Fields = append([]Field(nil), f.schema.Fields[:maxCols]...)
+	f.Meta.Truncated = true
+	f.Meta.ColumnCount = len(f.schema.Fields)
+	f.Meta = f.Meta.WithWarning("Column cap reached at %d columns.", maxCols)
 	return f
 }
