@@ -160,9 +160,10 @@ func (h *Handlers) Me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"user":        user,
-		"roles":       p.Roles,
-		"permissions": p.PermissionList(),
+		"user":         user,
+		"roles":        p.Roles,
+		"permissions":  p.PermissionList(),
+		"folderGrants": p.FolderGrantMap(),
 	})
 }
 

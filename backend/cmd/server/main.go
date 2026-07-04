@@ -23,6 +23,7 @@ import (
 	"github.com/yesoreyeram/data-explorer/backend/internal/connections"
 	"github.com/yesoreyeram/data-explorer/backend/internal/connections/connectors"
 	"github.com/yesoreyeram/data-explorer/backend/internal/domain"
+	"github.com/yesoreyeram/data-explorer/backend/internal/folders"
 	"github.com/yesoreyeram/data-explorer/backend/internal/observability"
 	"github.com/yesoreyeram/data-explorer/backend/internal/platform/crypto"
 	"github.com/yesoreyeram/data-explorer/backend/internal/platform/dbx"
@@ -93,10 +94,13 @@ func run() error {
 
 	catalogSvc := catalog.NewService()
 
+	foldersRepo := folders.NewRepository(pool)
+	foldersSvc := folders.NewService(foldersRepo)
+
 	metrics := observability.NewMetrics()
 
 	shutdownState := handlers.NewShutdownState()
-	h := handlers.New(authSvc, authRepo, auditSvc, connSvc, wfSvc, catalogSvc, metrics, cfg.Env == "production", cfg.Auth.RefreshTokenTTL)
+	h := handlers.New(authSvc, authRepo, auditSvc, connSvc, wfSvc, catalogSvc, foldersSvc, metrics, cfg.Env == "production", cfg.Auth.RefreshTokenTTL)
 	healthHandler := handlers.NewHealthHandler(pool, wfSvc, shutdownState)
 
 	router := api.NewRouter(cfg, h, healthHandler, tokenManager, metrics)

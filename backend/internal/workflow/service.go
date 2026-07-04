@@ -31,7 +31,7 @@ func NewService(repo *Repository, engine *Engine, connSvc *connections.Service) 
 	return &Service{repo: repo, engine: engine, connections: connSvc, activeByWorkflow: make(map[string]int)}
 }
 
-func (s *Service) Create(ctx context.Context, name, description string, definition json.RawMessage, createdBy string) (domain.Workflow, error) {
+func (s *Service) Create(ctx context.Context, name, description string, definition json.RawMessage, folderID, createdBy string) (domain.Workflow, error) {
 	def, err := ParseDefinition(definition)
 	if err != nil {
 		return domain.Workflow{}, err
@@ -42,18 +42,20 @@ func (s *Service) Create(ctx context.Context, name, description string, definiti
 	if len(definition) == 0 {
 		definition = json.RawMessage(`{"nodes":[],"edges":[]}`)
 	}
-	return s.repo.Create(ctx, name, description, definition, createdBy)
+	return s.repo.Create(ctx, name, description, definition, folderID, createdBy)
 }
 
-func (s *Service) List(ctx context.Context) ([]domain.Workflow, error) {
-	return s.repo.List(ctx)
+// List returns workflows, optionally restricted to a set of folder ids
+// (and their descendants) - see ListFilter.
+func (s *Service) List(ctx context.Context, f ListFilter) ([]domain.Workflow, error) {
+	return s.repo.List(ctx, f)
 }
 
 func (s *Service) Get(ctx context.Context, id string) (domain.Workflow, error) {
 	return s.repo.Get(ctx, id)
 }
 
-func (s *Service) Update(ctx context.Context, id, name, description string, definition json.RawMessage, status domain.WorkflowStatus) (domain.Workflow, error) {
+func (s *Service) Update(ctx context.Context, id, name, description string, definition json.RawMessage, status domain.WorkflowStatus, folderID string) (domain.Workflow, error) {
 	def, err := ParseDefinition(definition)
 	if err != nil {
 		return domain.Workflow{}, err
@@ -61,7 +63,7 @@ func (s *Service) Update(ctx context.Context, id, name, description string, defi
 	if err := def.Validate(); err != nil {
 		return domain.Workflow{}, fmt.Errorf("invalid workflow definition: %w", err)
 	}
-	return s.repo.Update(ctx, id, name, description, definition, status)
+	return s.repo.Update(ctx, id, name, description, definition, status, folderID)
 }
 
 func (s *Service) Delete(ctx context.Context, id string) error {

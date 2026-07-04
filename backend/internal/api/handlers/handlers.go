@@ -12,6 +12,7 @@ import (
 	"github.com/yesoreyeram/data-explorer/backend/internal/auth"
 	"github.com/yesoreyeram/data-explorer/backend/internal/catalog"
 	"github.com/yesoreyeram/data-explorer/backend/internal/connections"
+	"github.com/yesoreyeram/data-explorer/backend/internal/folders"
 	"github.com/yesoreyeram/data-explorer/backend/internal/observability"
 	"github.com/yesoreyeram/data-explorer/backend/internal/workflow"
 )
@@ -23,12 +24,13 @@ type Handlers struct {
 	Connections    *connections.Service
 	Workflows      *workflow.Service
 	Catalog        *catalog.Service
+	Folders        *folders.Service
 	Metrics        *observability.Metrics
 	SecureCookies  bool
 	RefreshTTL     time.Duration
 }
 
-func New(authSvc *auth.Service, authRepo *auth.Repository, auditSvc *audit.Service, connSvc *connections.Service, wfSvc *workflow.Service, catalogSvc *catalog.Service, metrics *observability.Metrics, secureCookies bool, refreshTTL time.Duration) *Handlers {
+func New(authSvc *auth.Service, authRepo *auth.Repository, auditSvc *audit.Service, connSvc *connections.Service, wfSvc *workflow.Service, catalogSvc *catalog.Service, foldersSvc *folders.Service, metrics *observability.Metrics, secureCookies bool, refreshTTL time.Duration) *Handlers {
 	return &Handlers{
 		Auth:           authSvc,
 		AuthRepository: authRepo,
@@ -36,6 +38,7 @@ func New(authSvc *auth.Service, authRepo *auth.Repository, auditSvc *audit.Servi
 		Connections:    connSvc,
 		Workflows:      wfSvc,
 		Catalog:        catalogSvc,
+		Folders:        foldersSvc,
 		Metrics:        metrics,
 		SecureCookies:  secureCookies,
 		RefreshTTL:     refreshTTL,

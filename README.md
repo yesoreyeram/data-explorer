@@ -47,10 +47,15 @@ in from day one.
   component library and design-token system (`src/components/ui`,
   `src/index.css`), with a collapsible sidebar and a light/dark/system theme
   switcher.
-- **Govern** access with role-based permissions and a full audit trail of who
-  did what, from where, and whether it succeeded — backed by guardrails at
-  every layer (row limits, response size caps, rate limits, execution
-  timeouts) so no single misbehaving pipeline can take the service down.
+- **Organize** every connection and workflow into nested folders — each with
+  its own tags, README, and free-form metadata — so a growing set of sources
+  and pipelines stays navigable instead of one flat list.
+- **Govern** access with role-based permissions, either account-wide or
+  scoped to a specific folder (and everything nested under it), plus custom
+  roles and a full audit trail of who did what, from where, and whether it
+  succeeded — backed by guardrails at every layer (row limits, response size
+  caps, rate limits, execution timeouts) so no single misbehaving pipeline
+  can take the service down.
 
 ## Screenshots
 
@@ -64,6 +69,8 @@ in from day one.
 | ![Explore a saved connection](docs/screenshots/20-explore-saved-result.png) Explore: query a saved connection | ![Explore a temporary connection](docs/screenshots/22-explore-temporary-result.png) Explore: query a temporary (never-persisted) connection |
 | ![Workflow schedule](docs/screenshots/25-workflow-schedule-modal.png) Cron schedule with presets | ![Scheduled workflows list](docs/screenshots/27-workflows-list-scheduled.png) Scheduled workflow at a glance |
 | ![Connection health panel](docs/screenshots/29-connection-health-panel.png) Health check: classified error + remediation + history | ![AWS assume role](docs/screenshots/31-aws-assume-role-fields.png) AWS STS AssumeRole as an alternative to a static key |
+| ![Nested folder tree](docs/screenshots/35-folders-nested-tree.png) Nested folders with tags | ![Folder detail with README](docs/screenshots/36-folder-detail-tags-readme.png) Folder tags, README, and metadata |
+| ![Folder-scoped role grant](docs/screenshots/38-folder-access-granted.png) Granting a role scoped to one folder | ![Scoped write denied outside the grant](docs/screenshots/40-scoped-editor-denied-general.png) A scoped editor blocked (403) outside their granted folder |
 
 More in [`docs/screenshots/`](docs/screenshots/), including the login page,
 connections list, workflows list, user/role administration, the Azure
@@ -76,7 +83,7 @@ certificate fields.
 | --------- | ---------------------------------------------------------------------- |
 | Backend   | Go 1.25, chi router, pgx (PostgreSQL driver), JWT auth, Prometheus     |
 | Frontend  | React 19, TypeScript, Vite, React Flow, TanStack Query, Zustand        |
-| Database  | PostgreSQL (system of record: users, connections, workflows, audit)   |
+| Database  | PostgreSQL (system of record: users, connections, workflows, folders, audit) |
 | Transform | [JSONata](https://jsonata.org) (via `blues/jsonata-go`)               |
 | Tabular data | `backend/pkg/dataframe` — standalone pandas-style Frame/Schema/Metadata library |
 | HTTP client  | `backend/pkg/httpclient` — standalone client with pluggable auth + pagination |

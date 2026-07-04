@@ -6,6 +6,7 @@ export interface WorkflowInput {
   description: string;
   definition: WorkflowDefinition;
   status?: WorkflowStatus;
+  folderId: string;
 }
 
 export async function listWorkflows(): Promise<Workflow[]> {

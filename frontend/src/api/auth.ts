@@ -32,6 +32,10 @@ export interface MeResponse {
   user: User;
   roles: string[];
   permissions: string[];
+  // folderGrants maps folder id -> permission codes granted specifically
+  // within that folder (and its descendants) via a folder-scoped role
+  // binding - see backend rbac.Principal.FolderGrantMap.
+  folderGrants: Record<string, string[]>;
 }
 
 export async function me(): Promise<MeResponse> {

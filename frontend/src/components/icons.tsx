@@ -99,6 +99,9 @@ export const IconRefresh = (p: IconProps) =>
     p,
   );
 export const IconChevronDown = (p: IconProps) => base(<path d="M4 6l4 4 4-4" />, p);
+export const IconChevronRight = (p: IconProps) => base(<path d="M6 4l4 4-4 4" />, p);
+export const IconFolder = (p: IconProps) =>
+  base(<path d="M2 4.5A1.5 1.5 0 013.5 3h2.6l1.2 1.5H12.5A1.5 1.5 0 0114 6v6a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 012 12v-7.5z" />, p);
 export const IconPlug = (p: IconProps) =>
   base(
     <>

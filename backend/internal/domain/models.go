@@ -38,6 +38,49 @@ type Permission struct {
 	ID          string `json:"id"`
 	Code        string `json:"code"`
 	Description string `json:"description"`
+	// Scopable marks permissions that can be granted on a folder subtree
+	// (connections:*, workflows:*, folders:*) via a FolderRoleBinding,
+	// rather than only account-wide (users:*, roles:*, audit:read). It's
+	// what keeps binding e.g. the admin role to a single folder from
+	// silently granting users:write folder-wide - resolving a folder-scoped
+	// grant always filters on Scopable, regardless of which role is bound.
+	Scopable bool `json:"scopable"`
+}
+
+// Folder is a node in the nested folder hierarchy every stored entity
+// (connections, workflows, ...) lives in. ParentID nil means a root-level
+// folder. AncestorIDs is the materialized, self-exclusive chain of every
+// ancestor from the root down to (but not including) this folder - it's
+// what lets "is this folder inside that subtree" and "list everything under
+// this folder" be simple indexed array lookups instead of a recursive query.
+// Depth is derived from AncestorIDs, not stored independently.
+type Folder struct {
+	ID          string          `json:"id"`
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	ParentID    *string         `json:"parentId,omitempty"`
+	AncestorIDs []string        `json:"ancestorIds"`
+	Depth       int             `json:"depth"`
+	Tags        []string        `json:"tags,omitempty"`
+	Readme      string          `json:"readme,omitempty"`
+	Metadata    json.RawMessage `json:"metadata,omitempty"`
+	CreatedBy   string          `json:"createdBy"`
+	CreatedAt   time.Time       `json:"createdAt"`
+	UpdatedAt   time.Time       `json:"updatedAt"`
+}
+
+// FolderRoleBinding grants a user a role's (scopable) permissions, but only
+// within one folder and its descendants - the namespace-scoped counterpart
+// to the account-wide user_roles assignment.
+type FolderRoleBinding struct {
+	ID        string    `json:"id"`
+	FolderID  string    `json:"folderId"`
+	UserID    string    `json:"userId"`
+	UserEmail string    `json:"userEmail,omitempty"`
+	RoleID    string    `json:"roleId"`
+	RoleName  string    `json:"roleName,omitempty"`
+	CreatedBy string    `json:"createdBy"`
+	CreatedAt time.Time `json:"createdAt"`
 }
 
 type ConnectionType string
@@ -64,14 +107,17 @@ const (
 // Non-secret configuration lives in Config; anything sensitive (passwords,
 // API keys, tokens) is stored encrypted-at-rest and never returned by the API.
 type Connection struct {
-	ID           string           `json:"id"`
-	Name         string           `json:"name"`
-	Type         ConnectionType   `json:"type"`
-	Description  string           `json:"description"`
-	Config       json.RawMessage  `json:"config"`
-	Status       ConnectionStatus `json:"status"`
-	LastTestedAt *time.Time       `json:"lastTestedAt,omitempty"`
-	LastError    string           `json:"lastError,omitempty"`
+	ID          string           `json:"id"`
+	Name        string           `json:"name"`
+	Type        ConnectionType   `json:"type"`
+	Description string           `json:"description"`
+	Config      json.RawMessage  `json:"config"`
+	Status      ConnectionStatus `json:"status"`
+	// FolderID is the folder this connection lives in - every connection
+	// must belong to exactly one (see internal/folders).
+	FolderID     string     `json:"folderId"`
+	LastTestedAt *time.Time `json:"lastTestedAt,omitempty"`
+	LastError    string     `json:"lastError,omitempty"`
 
 	// LastErrorCode/LastErrorRemediation are the structured counterpart to
 	// LastError (see connections.HealthError/Classify) - a stable code the
@@ -109,9 +155,12 @@ type Workflow struct {
 	Definition  json.RawMessage `json:"definition"` // WorkflowDefinition JSON (nodes + edges)
 	Status      WorkflowStatus  `json:"status"`
 	Version     int             `json:"version"`
-	CreatedBy   string          `json:"createdBy"`
-	CreatedAt   time.Time       `json:"createdAt"`
-	UpdatedAt   time.Time       `json:"updatedAt"`
+	// FolderID is the folder this workflow lives in - every workflow must
+	// belong to exactly one (see internal/folders).
+	FolderID  string    `json:"folderId"`
+	CreatedBy string    `json:"createdBy"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
 
 	// Schedule: a standard 5-field cron expression (minute hour dom month
 	// dow) evaluated by the scheduler - see internal/scheduler. Empty

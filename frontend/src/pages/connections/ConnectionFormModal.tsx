@@ -1,6 +1,9 @@
 import { useState, type FormEvent } from "react";
+import { useQuery } from "@tanstack/react-query";
 
 import { Modal } from "../../components/Modal";
+import { FolderSelect } from "../../components/FolderSelect";
+import { listFolders } from "../../api/folders";
 import type { CatalogEntry, Connection, ConnectionType } from "../../api/types";
 import { useConnectionFields } from "../../lib/connectionFields";
 import { ConnectionTypeConfigFields } from "./ConnectionTypeConfigFields";
@@ -17,6 +20,7 @@ interface ConnectionFormModalProps {
     description: string;
     config: Record<string, unknown>;
     secret?: Record<string, string>;
+    folderId: string;
   }) => Promise<void>;
 }
 
@@ -37,18 +41,24 @@ export function ConnectionFormModal({ connection, catalogEntry, onClose, onSubmi
 
   const [name, setName] = useState(connection?.name ?? prefill?.name ?? "");
   const [description, setDescription] = useState(connection?.description ?? prefill?.description ?? "");
+  const [folderId, setFolderId] = useState(connection?.folderId ?? "");
   const fields = useConnectionFields({ connection, prefill });
+  const { data: folders = [] } = useQuery({ queryKey: ["folders"], queryFn: () => listFolders() });
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    if (!folderId) {
+      setError("Please choose a folder for this connection.");
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
       const { config, secret } = fields.buildConfigAndSecret();
-      await onSubmit({ name, type: fields.type, description, config, secret });
+      await onSubmit({ name, type: fields.type, description, config, secret, folderId });
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save connection");
@@ -95,6 +105,10 @@ export function ConnectionFormModal({ connection, catalogEntry, onClose, onSubmi
 
         <Field htmlFor="conn-desc" label="Description">
           <Input id="conn-desc" value={description} onChange={(e) => setDescription(e.target.value)} />
+        </Field>
+
+        <Field htmlFor="conn-folder" label="Folder">
+          <FolderSelect id="conn-folder" folders={folders} value={folderId} onChange={setFolderId} placeholder="Select a folder…" />
         </Field>
 
         <ConnectionTypeConfigFields {...fields} isEdit={isEdit} prefill={prefill} />

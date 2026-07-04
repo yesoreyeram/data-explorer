@@ -9,6 +9,7 @@ import { RegisterPage } from "./pages/RegisterPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { ExplorePage } from "./pages/ExplorePage";
 import { ConnectionsPage } from "./pages/ConnectionsPage";
+import { FoldersPage } from "./pages/FoldersPage";
 import { WorkflowsPage } from "./pages/WorkflowsPage";
 import { WorkflowBuilderPage } from "./pages/WorkflowBuilderPage";
 import { AuditLogPage } from "./pages/AuditLogPage";
@@ -41,6 +42,7 @@ export default function App() {
               <Route path="/" element={<DashboardPage />} />
               <Route path="/explore" element={<ExplorePage />} />
               <Route path="/connections" element={<ConnectionsPage />} />
+              <Route path="/folders" element={<FoldersPage />} />
               <Route path="/workflows" element={<WorkflowsPage />} />
               <Route path="/workflows/:id" element={<WorkflowBuilderPage />} />
               <Route path="/audit-log" element={<AuditLogPage />} />

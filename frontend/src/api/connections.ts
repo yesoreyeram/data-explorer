@@ -7,6 +7,7 @@ export interface ConnectionInput {
   description: string;
   config: Record<string, unknown>;
   secret?: Record<string, string>;
+  folderId: string;
 }
 
 export async function listConnections(): Promise<Connection[]> {

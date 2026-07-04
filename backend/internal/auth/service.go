@@ -134,8 +134,12 @@ func (s *Service) issueTokenPair(ctx context.Context, user domain.User, ip, user
 	if err != nil {
 		return TokenPair{}, fmt.Errorf("resolve permissions: %w", err)
 	}
+	folderGrants, err := s.repo.GetUserFolderGrants(ctx, user.ID)
+	if err != nil {
+		return TokenPair{}, fmt.Errorf("resolve folder grants: %w", err)
+	}
 
-	access, accessExp, err := s.tokens.IssueAccessToken(user.ID, user.Email, roles, permissions)
+	access, accessExp, err := s.tokens.IssueAccessToken(user.ID, user.Email, roles, permissions, folderGrants)
 	if err != nil {
 		return TokenPair{}, fmt.Errorf("issue access token: %w", err)
 	}

@@ -34,18 +34,61 @@ a public issue.
 
 - Permissions are fixed, fine-grained strings (see
   `internal/rbac/rbac.go`); every mutating and every sensitive-read route is
-  gated by exactly one permission code (`internal/api/router.go`) - there is
-  no "if admin, skip the check" escape hatch anywhere in the handler layer.
+  gated by a permission code - there is no "if admin, skip the check" escape
+  hatch anywhere in the handler layer.
 - Authorization is enforced **server-side only**. The frontend's
-  `<PermissionGate>` hides UI a user can't use, but every API call is
-  re-checked independently; hiding a button is a UX nicety, not a security
-  boundary.
-- Every route is gated by exactly one permission code at the router, with
-  one documented exception: `POST /api/v1/explore/query` additionally
-  requires `connections:test` in the handler itself, but only when the
-  request body supplies a temporary (never-persisted) connection instead of
-  an existing connection ID - see "Ad-hoc exploration" below for why that
-  can't be expressed as a single route-level check.
+  `<PermissionGate>` and the scoped-permission checks in `authStore.ts` hide
+  UI a user can't use, but every API call is re-checked independently; hiding
+  a button is a UX nicety, not a security boundary.
+- Most routes are gated by exactly one permission code at the router
+  (`internal/api/router.go`, `RequirePermission(code)`), checked against the
+  caller's account-wide permission set before the handler ever runs. Two
+  documented exceptions:
+  - `POST /api/v1/explore/query` additionally requires `connections:test` in
+    the handler itself, but only when the request body supplies a temporary
+    (never-persisted) connection instead of an existing connection ID - see
+    "Ad-hoc exploration" below for why that can't be expressed as a single
+    route-level check.
+  - `/connections`, `/workflows`, `/folders` routes use only
+    `RequireAuth` (authenticated, no permission check) at the router level,
+    because their resources can be scoped to a folder rather than granted
+    account-wide - see "Folder-scoped access control" below. The actual
+    authorization decision moves into the handler, made once the target
+    entity's folder (and its ancestor chain) is known.
+- **Role permissions are only as strong as `permissions.scopable`.** A
+  folder-scoped grant (below) can only ever confer `connections:*`/
+  `workflows:*`/`folders:*` - permissions like `users:write`, `roles:write`,
+  and `audit:read` are hardcoded non-scopable, so binding even the `admin`
+  role to a folder cannot silently grant account-wide user/role management
+  through a side door. This is enforced at the query that resolves a
+  folder-scoped grant (`WHERE p.scopable`), not by convention.
+
+## Folder-scoped access control
+
+Every connection and workflow lives in exactly one folder
+(`internal/folders`, see
+[`ARCHITECTURE.md`](ARCHITECTURE.md#folder-scoped-rbac) for the full design),
+and access to it can be granted two ways that compose:
+
+- **Account-wide**, via the existing `user_roles` table - unchanged from
+  before this feature, and still the fast path for every user who has no
+  scoped grants.
+- **Scoped to a folder** (and everything under it), via
+  `folder_role_bindings(folder_id, user_id, role_id)` - e.g. an `editor` role
+  bound to a "Marketing" folder lets that user manage connections/workflows
+  in Marketing and its subfolders, without touching anything outside it.
+
+Both are resolved into the same JWT at login/refresh time
+(`AccessClaims.FolderGrants`), preserving the "authorization is an in-memory
+set lookup" property described above - a folder-scoped grant does not add a
+per-request database join. The trade-off is the same one flat permissions
+already have: revoking a folder-scoped grant takes effect on the user's next
+login/refresh, not instantly, bounded by the same short access-token TTL.
+
+Deleting a folder that still contains connections, workflows, or subfolders
+is rejected (`ON DELETE RESTRICT` at the database level, translated to a
+friendly error) - there is no cascading delete path that could silently
+destroy connections/workflows by deleting an ancestor folder.
 
 ## Secrets at rest
 

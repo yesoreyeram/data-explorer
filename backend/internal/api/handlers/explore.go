@@ -63,6 +63,9 @@ func (h *Handlers) ExploreQuery(w http.ResponseWriter, r *http.Request) {
 		resourceID string
 	)
 	if req.ConnectionID != "" {
+		if !h.authorizeConnectionAction(w, r, req.ConnectionID, rbac.PermConnectionsRead) {
+			return
+		}
 		resourceID = req.ConnectionID
 		result, err = h.Connections.Query(r.Context(), req.ConnectionID, req.Spec)
 	} else {

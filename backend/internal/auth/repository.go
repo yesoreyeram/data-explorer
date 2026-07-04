@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/yesoreyeram/data-explorer/backend/internal/domain"
+	"github.com/yesoreyeram/data-explorer/backend/internal/rbac"
 )
 
 var ErrNotFound = errors.New("not found")
@@ -147,6 +148,49 @@ func (r *Repository) GetUserRolesAndPermissions(ctx context.Context, userID stri
 	return roles, permissions, permRows.Err()
 }
 
+// GetUserFolderGrants resolves the user's folder-scoped role bindings into
+// one rbac.FolderGrant per folder, flattened to permission codes exactly
+// like GetUserRolesAndPermissions does for the account-wide set - so it can
+// be embedded in the JWT the same way, with zero per-request DB hits. The
+// scopable filter is what stops binding e.g. the admin role to a folder
+// from granting account-wide-only permissions (users:write, roles:write,
+// audit:read) within that folder - see 0006_folders.sql.
+func (r *Repository) GetUserFolderGrants(ctx context.Context, userID string) ([]rbac.FolderGrant, error) {
+	rows, err := r.db.Query(ctx,
+		`SELECT frb.folder_id, p.code
+		 FROM folder_role_bindings frb
+		 JOIN role_permissions rp ON rp.role_id = frb.role_id
+		 JOIN permissions p ON p.id = rp.permission_id
+		 WHERE frb.user_id = $1 AND p.scopable
+		 ORDER BY frb.folder_id`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("query folder grants: %w", err)
+	}
+	defer rows.Close()
+
+	byFolder := make(map[string][]string)
+	var order []string
+	for rows.Next() {
+		var folderID, code string
+		if err := rows.Scan(&folderID, &code); err != nil {
+			return nil, err
+		}
+		if _, seen := byFolder[folderID]; !seen {
+			order = append(order, folderID)
+		}
+		byFolder[folderID] = append(byFolder[folderID], code)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	grants := make([]rbac.FolderGrant, 0, len(order))
+	for _, folderID := range order {
+		grants = append(grants, rbac.FolderGrant{FolderID: folderID, Permissions: byFolder[folderID]})
+	}
+	return grants, nil
+}
+
 func (r *Repository) ListRoles(ctx context.Context) ([]domain.Role, error) {
 	rows, err := r.db.Query(ctx, `SELECT id, name, description, is_system FROM roles ORDER BY name`)
 	if err != nil {
@@ -162,7 +206,149 @@ func (r *Repository) ListRoles(ctx context.Context) ([]domain.Role, error) {
 		}
 		out = append(out, role)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	permRows, err := r.db.Query(ctx,
+		`SELECT rp.role_id, p.id, p.code, p.description, p.scopable
+		 FROM role_permissions rp JOIN permissions p ON p.id = rp.permission_id
+		 ORDER BY rp.role_id, p.code`)
+	if err != nil {
+		return nil, fmt.Errorf("query role permissions: %w", err)
+	}
+	defer permRows.Close()
+
+	byRole := make(map[string][]domain.Permission)
+	for permRows.Next() {
+		var roleID string
+		var perm domain.Permission
+		if err := permRows.Scan(&roleID, &perm.ID, &perm.Code, &perm.Description, &perm.Scopable); err != nil {
+			return nil, err
+		}
+		byRole[roleID] = append(byRole[roleID], perm)
+	}
+	if err := permRows.Err(); err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].Permissions = byRole[out[i].ID]
+	}
+	return out, nil
+}
+
+func (r *Repository) ListPermissions(ctx context.Context) ([]domain.Permission, error) {
+	rows, err := r.db.Query(ctx, `SELECT id, code, description, scopable FROM permissions ORDER BY code`)
+	if err != nil {
+		return nil, fmt.Errorf("query permissions: %w", err)
+	}
+	defer rows.Close()
+
+	var out []domain.Permission
+	for rows.Next() {
+		var perm domain.Permission
+		if err := rows.Scan(&perm.ID, &perm.Code, &perm.Description, &perm.Scopable); err != nil {
+			return nil, err
+		}
+		out = append(out, perm)
+	}
 	return out, rows.Err()
+}
+
+// ErrSystemRole guards the three built-in roles (admin/editor/viewer) from
+// having their permission set altered via the API - custom roles can be
+// created freely, but the system defaults stay a stable, predictable
+// baseline.
+var ErrSystemRole = errors.New("cannot modify a system role")
+
+// ErrInvalidPermission means one of the supplied permission ids doesn't
+// exist - surfaced via a foreign-key violation on role_permissions.
+var ErrInvalidPermission = errors.New("one or more permission ids are invalid")
+
+// CreateRole defines a new custom role (always is_system = false - only the
+// three seeded roles are system roles) with an initial permission set.
+func (r *Repository) CreateRole(ctx context.Context, name, description string, permissionIDs []string) (domain.Role, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return domain.Role{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	var role domain.Role
+	err = tx.QueryRow(ctx,
+		`INSERT INTO roles (name, description, is_system) VALUES ($1, $2, false)
+		 RETURNING id, name, description, is_system`,
+		name, description,
+	).Scan(&role.ID, &role.Name, &role.Description, &role.IsSystem)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return domain.Role{}, ErrConflict
+		}
+		return domain.Role{}, fmt.Errorf("insert role: %w", err)
+	}
+
+	for _, permID := range permissionIDs {
+		if _, err := tx.Exec(ctx, `INSERT INTO role_permissions (role_id, permission_id) VALUES ($1, $2)`, role.ID, permID); err != nil {
+			if isForeignKeyViolation(err) {
+				return domain.Role{}, ErrInvalidPermission
+			}
+			return domain.Role{}, fmt.Errorf("assign permission: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return domain.Role{}, err
+	}
+	role.Permissions = nil // caller can re-list if it needs the hydrated set
+	return role, nil
+}
+
+// UpdateRole replaces a custom role's description and permission set.
+// System roles (admin/editor/viewer) reject this with ErrSystemRole.
+func (r *Repository) UpdateRole(ctx context.Context, id, description string, permissionIDs []string) (domain.Role, error) {
+	var isSystem bool
+	err := r.db.QueryRow(ctx, `SELECT is_system FROM roles WHERE id = $1`, id).Scan(&isSystem)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.Role{}, ErrNotFound
+		}
+		return domain.Role{}, fmt.Errorf("query role: %w", err)
+	}
+	if isSystem {
+		return domain.Role{}, ErrSystemRole
+	}
+
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return domain.Role{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	var role domain.Role
+	err = tx.QueryRow(ctx,
+		`UPDATE roles SET description = $1 WHERE id = $2 RETURNING id, name, description, is_system`,
+		description, id,
+	).Scan(&role.ID, &role.Name, &role.Description, &role.IsSystem)
+	if err != nil {
+		return domain.Role{}, fmt.Errorf("update role: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `DELETE FROM role_permissions WHERE role_id = $1`, id); err != nil {
+		return domain.Role{}, fmt.Errorf("clear role permissions: %w", err)
+	}
+	for _, permID := range permissionIDs {
+		if _, err := tx.Exec(ctx, `INSERT INTO role_permissions (role_id, permission_id) VALUES ($1, $2)`, id, permID); err != nil {
+			if isForeignKeyViolation(err) {
+				return domain.Role{}, ErrInvalidPermission
+			}
+			return domain.Role{}, fmt.Errorf("assign permission: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return domain.Role{}, err
+	}
+	return role, nil
 }
 
 func (r *Repository) SetUserRoles(ctx context.Context, userID string, roleIDs []string) error {
@@ -229,6 +415,14 @@ func isUniqueViolation(err error) bool {
 	var pgErr interface{ SQLState() string }
 	if errors.As(err, &pgErr) {
 		return pgErr.SQLState() == "23505"
+	}
+	return false
+}
+
+func isForeignKeyViolation(err error) bool {
+	var pgErr interface{ SQLState() string }
+	if errors.As(err, &pgErr) {
+		return pgErr.SQLState() == "23503"
 	}
 	return false
 }

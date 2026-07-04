@@ -1,10 +1,22 @@
 export type UserStatus = "active" | "suspended";
 
+// Mirrors backend/internal/domain.Permission. Scopable marks permissions
+// that can be granted on a folder subtree (connections:*, workflows:*,
+// folders:*) via a folder-scoped role binding, rather than only
+// account-wide (users:*, roles:*, audit:read).
+export interface Permission {
+  id: string;
+  code: string;
+  description: string;
+  scopable: boolean;
+}
+
 export interface Role {
   id: string;
   name: string;
   description: string;
   isSystem: boolean;
+  permissions?: Permission[];
 }
 
 export interface User {
@@ -87,6 +99,7 @@ export interface Connection {
   description: string;
   config: Record<string, unknown>;
   status: ConnectionStatus;
+  folderId: string;
   lastTestedAt?: string;
   lastError?: string;
   lastErrorCode?: ErrorCode;
@@ -224,6 +237,7 @@ export interface Workflow {
   definition: WorkflowDefinition;
   status: WorkflowStatus;
   version: number;
+  folderId: string;
   createdBy: string;
   createdAt: string;
   updatedAt: string;
@@ -276,6 +290,38 @@ export interface AuditLog {
 
 export interface ApiErrorBody {
   error: { code: string; message: string; remediation?: string; detail?: string };
+}
+
+// Mirrors backend/internal/domain.Folder. Every connection/workflow lives
+// in exactly one folder; folders nest, and ancestorIds is the materialized
+// (self-exclusive) chain from the root down to this folder - what the
+// frontend uses to build breadcrumbs without a second request.
+export interface Folder {
+  id: string;
+  name: string;
+  description: string;
+  parentId?: string;
+  ancestorIds: string[];
+  depth: number;
+  tags?: string[];
+  readme?: string;
+  metadata?: Record<string, unknown>;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Mirrors backend/internal/domain.FolderRoleBinding - grants a user a
+// role's (scopable) permissions within one folder and its descendants.
+export interface FolderRoleBinding {
+  id: string;
+  folderId: string;
+  userId: string;
+  userEmail?: string;
+  roleId: string;
+  roleName?: string;
+  createdBy: string;
+  createdAt: string;
 }
 
 // Mirrors backend/internal/catalog.Entry - a static, first-party list of

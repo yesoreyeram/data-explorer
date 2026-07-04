@@ -11,11 +11,29 @@ import (
 	"github.com/yesoreyeram/data-explorer/backend/internal/audit"
 	"github.com/yesoreyeram/data-explorer/backend/internal/domain"
 	"github.com/yesoreyeram/data-explorer/backend/internal/platform/httpx"
+	"github.com/yesoreyeram/data-explorer/backend/internal/rbac"
 	"github.com/yesoreyeram/data-explorer/backend/internal/workflow"
 )
 
+// workflowScopeChain resolves a workflow's folder ancestry for an
+// rbac.Principal.HasScoped check - see connections.go's identical helper.
+func (h *Handlers) workflowScopeChain(r *http.Request, folderID string) ([]string, error) {
+	return h.Folders.ScopeChain(r.Context(), folderID)
+}
+
 func (h *Handlers) ListWorkflows(w http.ResponseWriter, r *http.Request) {
-	workflows, err := h.Workflows.List(r.Context())
+	p := principalOrEmpty(r)
+	filter := workflow.ListFilter{}
+	grantedIDs, global := p.GrantedFolderIDs(rbac.PermWorkflowsRead)
+	if !global {
+		if len(grantedIDs) == 0 {
+			httpx.WriteJSON(w, http.StatusOK, []domain.Workflow{})
+			return
+		}
+		filter.FolderIDs = grantedIDs
+	}
+
+	workflows, err := h.Workflows.List(r.Context(), filter)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to list workflows")
 		return
@@ -30,6 +48,16 @@ func (h *Handlers) GetWorkflow(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusNotFound, "not_found", "workflow not found")
 		return
 	}
+	p := principalOrEmpty(r)
+	chain, err := h.workflowScopeChain(r, wf.FolderID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to resolve workflow's folder")
+		return
+	}
+	if !p.HasScoped(rbac.PermWorkflowsRead, chain) {
+		httpx.WriteError(w, http.StatusForbidden, "forbidden", "you do not have permission to view this workflow")
+		return
+	}
 	httpx.WriteJSON(w, http.StatusOK, wf)
 }
 
@@ -38,6 +66,7 @@ type workflowRequest struct {
 	Description string          `json:"description"`
 	Definition  json.RawMessage `json:"definition"`
 	Status      string          `json:"status"`
+	FolderID    string          `json:"folderId"`
 }
 
 func (h *Handlers) CreateWorkflow(w http.ResponseWriter, r *http.Request) {
@@ -46,13 +75,23 @@ func (h *Handlers) CreateWorkflow(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteDecodeError(w, err)
 		return
 	}
-	if req.Name == "" {
-		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "name is required")
+	if req.Name == "" || req.FolderID == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "name and folderId are required")
 		return
 	}
 
 	p := principalOrEmpty(r)
-	wf, err := h.Workflows.Create(r.Context(), req.Name, req.Description, req.Definition, p.UserID)
+	chain, err := h.workflowScopeChain(r, req.FolderID)
+	if err != nil {
+		writeFoldersError(w, err)
+		return
+	}
+	if !p.HasScoped(rbac.PermWorkflowsWrite, chain) {
+		httpx.WriteError(w, http.StatusForbidden, "forbidden", "you do not have permission to create workflows in this folder")
+		return
+	}
+
+	wf, err := h.Workflows.Create(r.Context(), req.Name, req.Description, req.Definition, req.FolderID, p.UserID)
 	if err != nil {
 		h.recordAudit(r, "workflow.create", "workflow", "", audit.OutcomeFailure, map[string]any{"name": req.Name, "error": err.Error()})
 		writeWorkflowError(w, err)
@@ -75,7 +114,38 @@ func (h *Handlers) UpdateWorkflow(w http.ResponseWriter, r *http.Request) {
 		status = domain.WorkflowStatusDraft
 	}
 
-	wf, err := h.Workflows.Update(r.Context(), id, req.Name, req.Description, req.Definition, status)
+	existing, err := h.Workflows.Get(r.Context(), id)
+	if err != nil {
+		writeWorkflowError(w, err)
+		return
+	}
+	p := principalOrEmpty(r)
+	currentChain, err := h.workflowScopeChain(r, existing.FolderID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to resolve workflow's folder")
+		return
+	}
+	if !p.HasScoped(rbac.PermWorkflowsWrite, currentChain) {
+		httpx.WriteError(w, http.StatusForbidden, "forbidden", "you do not have permission to update this workflow")
+		return
+	}
+	if req.FolderID != "" && req.FolderID != existing.FolderID {
+		destChain, err := h.workflowScopeChain(r, req.FolderID)
+		if err != nil {
+			writeFoldersError(w, err)
+			return
+		}
+		if !p.HasScoped(rbac.PermWorkflowsWrite, destChain) {
+			httpx.WriteError(w, http.StatusForbidden, "forbidden", "you do not have permission to move a workflow into this folder")
+			return
+		}
+	}
+	folderID := req.FolderID
+	if folderID == "" {
+		folderID = existing.FolderID
+	}
+
+	wf, err := h.Workflows.Update(r.Context(), id, req.Name, req.Description, req.Definition, status, folderID)
 	if err != nil {
 		writeWorkflowError(w, err)
 		return
@@ -83,6 +153,29 @@ func (h *Handlers) UpdateWorkflow(w http.ResponseWriter, r *http.Request) {
 
 	h.recordAudit(r, "workflow.update", "workflow", id, audit.OutcomeSuccess, map[string]any{"name": wf.Name, "version": wf.Version})
 	httpx.WriteJSON(w, http.StatusOK, wf)
+}
+
+// authorizeWorkflowAction loads the workflow, checks permission scoped to
+// its folder, and writes the appropriate error response if either the
+// lookup or the authorization check fails. Returns true iff the caller
+// should proceed.
+func (h *Handlers) authorizeWorkflowAction(w http.ResponseWriter, r *http.Request, id, permission string) bool {
+	wf, err := h.Workflows.Get(r.Context(), id)
+	if err != nil {
+		writeWorkflowError(w, err)
+		return false
+	}
+	p := principalOrEmpty(r)
+	chain, err := h.workflowScopeChain(r, wf.FolderID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to resolve workflow's folder")
+		return false
+	}
+	if !p.HasScoped(permission, chain) {
+		httpx.WriteError(w, http.StatusForbidden, "forbidden", "you do not have permission to perform this action on this workflow")
+		return false
+	}
+	return true
 }
 
 type workflowScheduleRequest struct {
@@ -99,6 +192,9 @@ func (h *Handlers) SetWorkflowSchedule(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Enabled && req.Cron == "" {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "cron is required when enabling a schedule")
+		return
+	}
+	if !h.authorizeWorkflowAction(w, r, id, rbac.PermWorkflowsWrite) {
 		return
 	}
 
@@ -119,6 +215,9 @@ func (h *Handlers) SetWorkflowSchedule(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) DeleteWorkflow(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	if !h.authorizeWorkflowAction(w, r, id, rbac.PermWorkflowsWrite) {
+		return
+	}
 	if err := h.Workflows.Delete(r.Context(), id); err != nil {
 		writeWorkflowError(w, err)
 		return
@@ -129,6 +228,9 @@ func (h *Handlers) DeleteWorkflow(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) ExecuteWorkflow(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	if !h.authorizeWorkflowAction(w, r, id, rbac.PermWorkflowsExecute) {
+		return
+	}
 	p := principalOrEmpty(r)
 
 	execution, output, err := h.Workflows.Execute(r.Context(), id, p.UserID)
@@ -162,6 +264,9 @@ func (h *Handlers) ExecuteWorkflow(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) ListWorkflowExecutions(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	if !h.authorizeWorkflowAction(w, r, id, rbac.PermWorkflowsRead) {
+		return
+	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 
 	executions, err := h.Workflows.ListExecutions(r.Context(), id, limit)
@@ -173,6 +278,10 @@ func (h *Handlers) ListWorkflowExecutions(w http.ResponseWriter, r *http.Request
 }
 
 func (h *Handlers) GetWorkflowExecution(w http.ResponseWriter, r *http.Request) {
+	workflowID := chi.URLParam(r, "id")
+	if !h.authorizeWorkflowAction(w, r, workflowID, rbac.PermWorkflowsRead) {
+		return
+	}
 	id := chi.URLParam(r, "executionId")
 	execution, err := h.Workflows.GetExecution(r.Context(), id)
 	if err != nil {

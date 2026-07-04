@@ -11,4 +11,7 @@ export const PERMISSIONS = {
   workflowsWrite: "workflows:write",
   workflowsExecute: "workflows:execute",
   auditRead: "audit:read",
+  foldersRead: "folders:read",
+  foldersWrite: "folders:write",
+  foldersManageAccess: "folders:manage_access",
 } as const;

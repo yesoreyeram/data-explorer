@@ -68,6 +68,7 @@ backend/
     connections/            connection CRUD, secret encryption, connector interface, per-connection rate limit
       connectors/           postgres, mysql, rest, graphql, aws, gcp, azure implementations + shared auth/pagination/object-parsing glue
     catalog/                static integration catalog (prefill data for the connection form - see below)
+    folders/                 nested folder hierarchy every entity lives in, folder-scoped RBAC bindings (see below)
     workflow/                DAG definition, topological execution engine, size/row guardrails, cron schedule parsing
       nodes/                  one executor per node type (source/transform/filter/join/aggregate/output)
     scheduler/               in-process poll loop that executes due cron-scheduled workflows
@@ -99,8 +100,13 @@ Every API request passes through the same middleware chain
    requests (so `/healthz`, `/login` etc. can share the chain).
 7. **Rate limiting** - a general per-IP limiter, plus a stricter one on
    `/auth/login|register|refresh`.
-8. Route-specific **`RequirePermission(code)`** - the actual authorization
-   check, one permission code per route (see `internal/rbac/rbac.go`).
+8. Route-specific authorization - most routes use **`RequirePermission(code)`**,
+   a global-permission check that runs before the handler
+   (see `internal/rbac/rbac.go`). Routes whose resources can be
+   folder-scoped (`/connections`, `/workflows`, `/folders`, `/explore`) use
+   only **`RequireAuth`** at the router level instead, and check
+   authorization *inside* the handler once the target entity's folder is
+   known - see "Folder-scoped RBAC" below for why.
 
 Handlers that mutate state call `Handlers.recordAudit(...)` before returning,
 which writes an `audit_logs` row with the actor, action, resource, outcome,
@@ -122,6 +128,103 @@ request authorizes with a pure in-memory set lookup
 The cost is that a role change takes effect on next login/refresh, not
 instantly; access tokens are short-lived (15 minutes) by default specifically
 to bound that staleness window.
+
+Roles themselves are editable, not just assignable: `POST`/`PUT /roles`
+(`internal/auth.CreateRole`/`UpdateRole`) let an admin define custom
+permission bundles beyond the three seeded system roles. A system role
+(`admin`/`editor`/`viewer`, `is_system=true`) can't be mutated - both handlers
+reject that with `ErrSystemRole` (409) - since those three names are relied
+on elsewhere (e.g. the default role granted at registration).
+
+## Folders: every entity lives in one
+
+`internal/folders` implements a nested folder hierarchy - every `Connection`
+and `Workflow` row has a required `folder_id`, and folders can contain
+folders arbitrarily deep. A folder also carries `tags`, a plain-text
+`readme`, and a free-form `metadata` JSONB blob, so it doubles as a place to
+document *what* a group of connections/workflows is for, not just a
+container.
+
+**Representation**: adjacency list plus a materialized ancestor array.
+`parent_id` is the source of truth for the tree shape; `ancestor_ids TEXT[]`
+(GIN-indexed, self-exclusive - a folder's own id is never in its own array)
+caches the full chain up to the root, and `depth` is a generated column
+(`COALESCE(array_length(ancestor_ids,1),0)`) so it can never drift from the
+array. The array is what makes two operations cheap without recursive CTEs:
+
+- **"does folder X fall under folder Y's subtree"** (used everywhere a
+  folder-scoped grant needs to cover descendants) is `Y = ANY(X.ancestor_ids)`
+  or `X.id = Y`, one indexed lookup.
+- **Moving a subtree** (`folders.Service.Move` /
+  `internal/folders/move.go`) finds every affected descendant with one
+  GIN-indexed query (`WHERE $1 = ANY(ancestor_ids)`, no recursion), then
+  `recomputeAncestorsForMove` - a pure, unit-tested function - replaces the
+  fixed-length old-ancestor-chain prefix on each descendant's array with the
+  new one, preserving each descendant's relative position below the mover.
+  Guardrails bound the blast radius of one move: `MaxSubtreeSizeForMove`
+  (5,000 descendants) plus a `SET LOCAL statement_timeout = '5s'` inside the
+  move transaction, and `MaxFolderDepth` (20) is re-checked against the
+  deepest affected descendant, not just the mover.
+
+`TEXT[]` (not `UUID[]`) is a deliberate choice: Postgres doesn't enforce FK
+integrity on array elements either way, so there's no integrity trade-off,
+and it sidesteps pgx's less-exercised uuid-array codec path in favor of the
+scalar `uuid`→`string` scanning already proven everywhere else in this
+codebase.
+
+**Deleting a non-empty folder is rejected, and the folders package doesn't
+need to know why.** `folders.parent_id`, `connections.folder_id`, and
+`workflows.folder_id` are all `ON DELETE RESTRICT`. `Repository.Delete`
+just issues the `DELETE` and translates a Postgres `23503`
+foreign-key-violation (read off `pgconn.PgError.TableName`) into
+`ErrNotEmpty` with a friendly "it still has connections/workflows/subfolders"
+message. This means a *future* entity type participates automatically just
+by adding its own `folder_id ... ON DELETE RESTRICT` - zero changes needed in
+`internal/folders`. (`folder_role_bindings.folder_id` is `ON DELETE CASCADE`
+instead, since a binding is metadata about the folder, not content - deleting
+an already-empty folder must always succeed regardless of who has access to
+it.)
+
+## Folder-scoped RBAC
+
+Permissions gained a `scopable BOOLEAN` flag - true only for
+`connections:*`, `workflows:*`, `folders:*`; false for `users:*`, `roles:*`,
+`audit:read`. This is what stops binding, say, the `admin` role to a folder
+from silently granting folder-wide `users:write` - every query that resolves
+a folder-scoped grant filters `WHERE p.scopable`.
+
+`folder_role_bindings(folder_id, user_id, role_id)` is a namespace-scoped
+counterpart to the existing global `user_roles` table, reusing the same
+`roles`/`role_permissions` tables - a role is just a named permission bundle
+either way; a binding is what varies. `GrantAccess` caps bindings at
+`MaxRoleBindingsPerUser` (200) to bound how large one user's JWT can grow.
+
+Like the flat permission set, a user's folder grants are resolved once at
+login/refresh and embedded in the JWT (`AccessClaims.FolderGrants`, using
+short keys `f`/`p` since it repeats per binding) rather than looked up per
+request - preserving the same "authorization is an in-memory set lookup, not
+a database join" property the flat model already had.
+`rbac.Principal.HasScoped(permission, folderChain []string) bool` checks the
+global set first (unchanged fast path for every user without scoped grants),
+then falls back to whether any folder in `folderChain` (typically a target
+folder's own id followed by its ancestor ids) has a matching grant - so a
+grant on a parent folder automatically covers everything under it.
+`GrantedFolderIDs(permission)` returns `(ids, global bool)` for list-endpoint
+filtering: `global=true` means skip filtering entirely, otherwise only rows
+under those specific folder ids are returned.
+
+**The router-level gap this closes**: the pre-existing `RequirePermission(code)`
+middleware runs *before* the handler and rejects anyone lacking the *global*
+permission - a folder-scoped-only user would never reach the handler at all.
+`/connections`, `/workflows`, `/folders`, and `/explore` routes now use only
+`RequireAuth` at the router level; the actual check moves into each handler,
+after it has loaded the target entity's `folder_id` (or, for `Create`, the
+request body's `folderId`) and computed that folder's scope chain via
+`folders.Service.ScopeChain`. This is a deliberate, narrow exception to
+"handlers never carry authorization logic" - list endpoints needed a real
+service-layer contract change to go with it (`ListFilter{FolderIDs []string}`
+on both `connections.Repository` and `workflow.Repository`), since a list has
+no single target to check post-hoc.
 
 ## dataframe: the tabular data contract
 

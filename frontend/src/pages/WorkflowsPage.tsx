@@ -3,10 +3,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 
 import { createWorkflow, deleteWorkflow, listWorkflows } from "../api/workflows";
+import { listFolders } from "../api/folders";
 import { extractErrorMessage } from "../api/client";
 import { StatusBadge } from "../components/StatusBadge";
-import { PermissionGate } from "../components/PermissionGate";
+import { FolderSelect } from "../components/FolderSelect";
 import { PERMISSIONS } from "../lib/permissions";
+import { useAuthStore } from "../state/authStore";
 import { IconClock, IconPlus, IconTrash, IconWorkflow } from "../components/icons";
 import { Modal } from "../components/Modal";
 import { Badge, Button, Card, CardBody, Field, IconButton, Input } from "../components/ui";
@@ -15,14 +17,26 @@ export function WorkflowsPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { data: workflows = [], isLoading, error } = useQuery({ queryKey: ["workflows"], queryFn: listWorkflows });
+  const { data: folders = [] } = useQuery({ queryKey: ["folders"], queryFn: () => listFolders() });
+  const hasScopedPermission = useAuthStore((s) => s.hasScopedPermission);
+  const hasAnyScopedPermission = useAuthStore((s) => s.hasAnyScopedPermission);
 
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [folderId, setFolderId] = useState("");
+  const [folderFilter, setFolderFilter] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
 
+  const visibleWorkflows = folderFilter ? workflows.filter((w) => w.folderId === folderFilter) : workflows;
+  const folderName = (id: string) => folders.find((f) => f.id === id)?.name ?? "";
+  const scopeChainFor = (folderId: string): string[] => {
+    const folder = folders.find((f) => f.id === folderId);
+    return folder ? [folder.id, ...folder.ancestorIds] : [folderId];
+  };
+
   const createMutation = useMutation({
-    mutationFn: () => createWorkflow({ name, description, definition: { nodes: [], edges: [] } }),
+    mutationFn: () => createWorkflow({ name, description, definition: { nodes: [], edges: [] }, folderId }),
     onSuccess: (wf) => {
       queryClient.invalidateQueries({ queryKey: ["workflows"] });
       navigate(`/workflows/${wf.id}`);
@@ -35,12 +49,17 @@ export function WorkflowsPage() {
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
+    if (!folderId) {
+      setFormError("Please choose a folder for this workflow.");
+      return;
+    }
     setFormError(null);
     try {
       await createMutation.mutateAsync();
       setCreating(false);
       setName("");
       setDescription("");
+      setFolderId("");
     } catch (err) {
       setFormError(extractErrorMessage(err));
     }
@@ -58,25 +77,29 @@ export function WorkflowsPage() {
           <h1 className="panel-title">Workflows</h1>
           <p className="panel-subtitle">Pull, transform, and combine data with a visual pipeline.</p>
         </div>
-        <PermissionGate permission={PERMISSIONS.workflowsWrite}>
+        {hasAnyScopedPermission(PERMISSIONS.workflowsWrite) && (
           <Button variant="primary" onClick={() => setCreating(true)}>
             <IconPlus width={14} height={14} /> New workflow
           </Button>
-        </PermissionGate>
+        )}
       </div>
 
       {error && <div className="error-banner">{extractErrorMessage(error)}</div>}
 
+      <Field htmlFor="wf-folder-filter" label="Filter by folder" style={{ maxWidth: 260, marginBottom: 12 }}>
+        <FolderSelect id="wf-folder-filter" folders={folders} value={folderFilter} onChange={setFolderFilter} placeholder="All folders" />
+      </Field>
+
       {isLoading ? (
         <p>Loading…</p>
-      ) : workflows.length === 0 ? (
+      ) : visibleWorkflows.length === 0 ? (
         <div className="empty-state">
           <IconWorkflow width={28} height={28} />
           <p>No workflows yet. Create one to start stitching data together.</p>
         </div>
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 12 }}>
-          {workflows.map((wf) => (
+          {visibleWorkflows.map((wf) => (
             <Card key={wf.id} style={{ cursor: "pointer" }} onClick={() => navigate(`/workflows/${wf.id}`)}>
               <CardBody>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -92,8 +115,10 @@ export function WorkflowsPage() {
                 </div>
                 <p style={{ color: "var(--text-secondary)", fontSize: 12, minHeight: 32 }}>{wf.description || "No description"}</p>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11, color: "var(--text-tertiary)" }}>
-                  <span>{wf.definition.nodes?.length ?? 0} nodes &middot; v{wf.version}</span>
-                  <PermissionGate permission={PERMISSIONS.workflowsWrite}>
+                  <span>
+                    {folderName(wf.folderId)} &middot; {wf.definition.nodes?.length ?? 0} nodes &middot; v{wf.version}
+                  </span>
+                  {hasScopedPermission(PERMISSIONS.workflowsWrite, scopeChainFor(wf.folderId)) && (
                     <IconButton
                       label="Delete"
                       onClick={(e) => {
@@ -103,7 +128,7 @@ export function WorkflowsPage() {
                     >
                       <IconTrash width={13} height={13} />
                     </IconButton>
-                  </PermissionGate>
+                  )}
                 </div>
               </CardBody>
             </Card>
@@ -131,6 +156,9 @@ export function WorkflowsPage() {
             </Field>
             <Field htmlFor="wf-desc" label="Description">
               <Input id="wf-desc" value={description} onChange={(e) => setDescription(e.target.value)} />
+            </Field>
+            <Field htmlFor="wf-folder" label="Folder">
+              <FolderSelect id="wf-folder" folders={folders} value={folderId} onChange={setFolderId} placeholder="Select a folder…" />
             </Field>
           </form>
         </Modal>

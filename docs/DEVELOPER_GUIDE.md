@@ -378,6 +378,62 @@ this code:
   through the exact same `workflow.Service.Execute`, so it gets the same
   `MaxExecutionDuration` bound and the same guardrails as any other run.
 
+## Folders and folder-scoped RBAC
+
+See [`ARCHITECTURE.md`](ARCHITECTURE.md#folders-every-entity-lives-in-one) for
+the design (adjacency list + materialized ancestor array, `ON DELETE
+RESTRICT` for "can't delete a non-empty folder", JWT-embedded scoped grants).
+Things worth knowing when touching this code:
+
+- Every `Connection`/`Workflow` create request must carry a `folderId` -
+  there's no implicit "General" folder default in the API, even though the
+  migration seeds one for pre-existing rows. `400`s with a clear message if
+  omitted (see `CreateConnection`/`CreateWorkflow` in
+  `internal/api/handlers/`).
+- A folder-scoped grant on a permission that isn't `scopable` in
+  `db/migrations/0006_folders.sql` (i.e. anything other than
+  `connections:*`/`workflows:*`/`folders:*`) is rejected by `GrantAccess` -
+  don't work around this by adding new scopable permissions casually; it
+  exists specifically so binding a role to a folder can never imply
+  account-wide capabilities like `users:write`.
+- `folders.Service.Move` and its guardrails
+  (`MaxSubtreeSizeForMove`/`MaxFolderDepth`) live in
+  `internal/folders/move.go`; `recomputeAncestorsForMove` is a pure function
+  covered by table-driven tests in `move_test.go` - extend those first if you
+  change the ancestor-array arithmetic.
+
+### Making a new entity type folder-scoped
+
+Any future entity that should live in a folder (matching "all entities must
+be stored in a folder") needs, by analogy with `connections`/`workflows`:
+
+1. A `folder_id UUID NOT NULL REFERENCES folders(id) ON DELETE RESTRICT` column
+   on the new table (own migration). The `RESTRICT` is what makes the
+   folder-delete-blocked-by-contents check work for this entity type with
+   *zero* changes to `internal/folders` - `Repository.Delete` there just
+   translates whatever FK violation comes back.
+2. A `folderId` field on the domain struct, create/update inputs, and a
+   `ListFilter{FolderIDs []string}` on the entity's own repository (see
+   `connections.Repository.List`/`workflow.Repository.List` for the
+   `id::text = ANY($1) OR ancestor_ids && $1` filter pattern against the
+   `folders` table).
+3. In the handler: switch the router registration from
+   `RequirePermission(code)` to `RequireAuth`, then check
+   `principal.HasScoped(permission, scopeChain)` explicitly after loading the
+   target row's `folder_id` (or the request body's `folderId` for `Create`) -
+   see `connectionScopeChain`/`authorizeConnectionAction` in
+   `internal/api/handlers/connections.go` for the pattern to copy. For the
+   list endpoint, use `principal.GrantedFolderIDs(permission)` to build the
+   `ListFilter` instead (skip filtering entirely when it reports `global`).
+4. On the frontend: add a `FolderSelect` field to the entity's create/edit
+   form (see `ConnectionFormModal.tsx`) and replace any `PermissionGate`
+   around that entity's write/action buttons with a direct
+   `hasScopedPermission(permission, scopeChainFor(entity.folderId))` /
+   `hasAnyScopedPermission(permission)` check (see `ConnectionsPage.tsx`) -
+   `PermissionGate` only ever sees the flat global permission list, so it
+   will hide those buttons from a folder-scoped-only user even when the API
+   would actually allow the action.
+
 ## Database migrations
 
 Migrations are plain `.sql` files in `backend/db/migrations/`, embedded into

@@ -8,25 +8,27 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/yesoreyeram/data-explorer/backend/internal/domain"
 )
 
-const workflowColumns = `id, name, description, definition, status, version, created_by, created_at, updated_at,
+const workflowColumns = `id, name, description, definition, status, version, folder_id, created_by, created_at, updated_at,
 	schedule_cron, schedule_enabled, schedule_next_run, schedule_last_run`
 
 func scanWorkflow(row interface {
 	Scan(dest ...any) error
 }) (domain.Workflow, error) {
 	var w domain.Workflow
-	err := row.Scan(&w.ID, &w.Name, &w.Description, &w.Definition, &w.Status, &w.Version, &w.CreatedBy, &w.CreatedAt, &w.UpdatedAt,
+	err := row.Scan(&w.ID, &w.Name, &w.Description, &w.Definition, &w.Status, &w.Version, &w.FolderID, &w.CreatedBy, &w.CreatedAt, &w.UpdatedAt,
 		&w.ScheduleCron, &w.ScheduleEnabled, &w.ScheduleNextRun, &w.ScheduleLastRun)
 	return w, err
 }
 
 var ErrNotFound = errors.New("workflow not found")
 var ErrConflict = errors.New("a workflow with this name already exists")
+var ErrFolderNotFound = errors.New("folder not found")
 
 type Repository struct {
 	db *pgxpool.Pool
@@ -36,25 +38,42 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 	return &Repository{db: db}
 }
 
-func (r *Repository) Create(ctx context.Context, name, description string, definition json.RawMessage, createdBy string) (domain.Workflow, error) {
+func (r *Repository) Create(ctx context.Context, name, description string, definition json.RawMessage, folderID, createdBy string) (domain.Workflow, error) {
 	row := r.db.QueryRow(ctx,
-		`INSERT INTO workflows (name, description, definition, created_by)
-		 VALUES ($1, $2, $3, $4)
+		`INSERT INTO workflows (name, description, definition, folder_id, created_by)
+		 VALUES ($1, $2, $3, $4, $5)
 		 RETURNING `+workflowColumns,
-		name, description, definition, createdBy,
+		name, description, definition, folderID, createdBy,
 	)
 	w, err := scanWorkflow(row)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return domain.Workflow{}, ErrConflict
 		}
+		if isForeignKeyViolation(err) {
+			return domain.Workflow{}, ErrFolderNotFound
+		}
 		return domain.Workflow{}, fmt.Errorf("insert workflow: %w", err)
 	}
 	return w, nil
 }
 
-func (r *Repository) List(ctx context.Context) ([]domain.Workflow, error) {
-	rows, err := r.db.Query(ctx, `SELECT `+workflowColumns+` FROM workflows ORDER BY updated_at DESC`)
+// ListFilter scopes which workflows List returns. FolderIDs nil means no
+// restriction (the caller holds workflows:read globally); non-nil
+// restricts to workflows whose folder is one of these ids or a descendant
+// of one of them - see rbac.Principal.GrantedFolderIDs.
+type ListFilter struct {
+	FolderIDs []string
+}
+
+func (r *Repository) List(ctx context.Context, f ListFilter) ([]domain.Workflow, error) {
+	where := ""
+	args := []any{}
+	if f.FolderIDs != nil {
+		args = append(args, f.FolderIDs)
+		where = ` WHERE folder_id IN (SELECT id FROM folders WHERE id::text = ANY($1) OR ancestor_ids && $1)`
+	}
+	rows, err := r.db.Query(ctx, `SELECT `+workflowColumns+` FROM workflows`+where+` ORDER BY updated_at DESC`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query workflows: %w", err)
 	}
@@ -83,12 +102,12 @@ func (r *Repository) Get(ctx context.Context, id string) (domain.Workflow, error
 	return w, nil
 }
 
-func (r *Repository) Update(ctx context.Context, id, name, description string, definition json.RawMessage, status domain.WorkflowStatus) (domain.Workflow, error) {
+func (r *Repository) Update(ctx context.Context, id, name, description string, definition json.RawMessage, status domain.WorkflowStatus, folderID string) (domain.Workflow, error) {
 	row := r.db.QueryRow(ctx,
-		`UPDATE workflows SET name = $1, description = $2, definition = $3, status = $4, version = version + 1, updated_at = now()
-		 WHERE id = $5
+		`UPDATE workflows SET name = $1, description = $2, definition = $3, status = $4, folder_id = $5, version = version + 1, updated_at = now()
+		 WHERE id = $6
 		 RETURNING `+workflowColumns,
-		name, description, definition, status, id,
+		name, description, definition, status, folderID, id,
 	)
 	w, err := scanWorkflow(row)
 	if err != nil {
@@ -97,6 +116,9 @@ func (r *Repository) Update(ctx context.Context, id, name, description string, d
 		}
 		if isUniqueViolation(err) {
 			return domain.Workflow{}, ErrConflict
+		}
+		if isForeignKeyViolation(err) {
+			return domain.Workflow{}, ErrFolderNotFound
 		}
 		return domain.Workflow{}, fmt.Errorf("update workflow: %w", err)
 	}
@@ -241,6 +263,14 @@ func isUniqueViolation(err error) bool {
 	var pgErr interface{ SQLState() string }
 	if errors.As(err, &pgErr) {
 		return pgErr.SQLState() == "23505"
+	}
+	return false
+}
+
+func isForeignKeyViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "23503"
 	}
 	return false
 }

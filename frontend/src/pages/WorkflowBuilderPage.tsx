@@ -18,10 +18,10 @@ import "reactflow/dist/style.css";
 
 import { extractErrorMessage } from "../api/client";
 import { executeWorkflow, getWorkflow, listWorkflowExecutions, setWorkflowSchedule, updateWorkflow } from "../api/workflows";
+import { listFolders } from "../api/folders";
 import type { NodeType, DataFrame, WorkflowDefinition, WorkflowEdge, WorkflowNode, WorkflowStatus } from "../api/types";
 import { DataFrameView } from "../components/DataFrameView";
 import { StatusBadge } from "../components/StatusBadge";
-import { PermissionGate } from "../components/PermissionGate";
 import { PERMISSIONS } from "../lib/permissions";
 import { useAuthStore } from "../state/authStore";
 import { IconClock, IconPlay } from "../components/icons";
@@ -138,6 +138,13 @@ export function WorkflowBuilderPage() {
     queryFn: () => listWorkflowExecutions(id!, 20),
     enabled: Boolean(id),
   });
+  const { data: folders = [] } = useQuery({ queryKey: ["folders"], queryFn: () => listFolders() });
+  const hasScopedPermission = useAuthStore((s) => s.hasScopedPermission);
+  const scopeChain = (() => {
+    if (!workflow) return [];
+    const folder = folders.find((f) => f.id === workflow.folderId);
+    return folder ? [folder.id, ...folder.ancestorIds] : [workflow.folderId];
+  })();
 
   const [nodes, setNodes, onNodesChange] = useNodesState<FlowNodeData>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
@@ -170,7 +177,7 @@ export function WorkflowBuilderPage() {
 
   const saveMutation = useMutation({
     mutationFn: () =>
-      updateWorkflow(id!, { name, description, definition: flowToDefinition(nodes, edges), status }),
+      updateWorkflow(id!, { name, description, definition: flowToDefinition(nodes, edges), status, folderId: workflow?.folderId ?? "" }),
     onSuccess: (wf) => {
       queryClient.invalidateQueries({ queryKey: ["workflow", id] });
       queryClient.invalidateQueries({ queryKey: ["workflows"] });
@@ -337,21 +344,21 @@ export function WorkflowBuilderPage() {
             <option value="draft">Draft</option>
             <option value="published">Published</option>
           </select>
-          <PermissionGate permission={PERMISSIONS.workflowsWrite}>
+          {hasScopedPermission(PERMISSIONS.workflowsWrite, scopeChain) && (
             <Button onClick={() => setScheduleOpen(true)}>
               <IconClock width={13} height={13} /> Schedule
             </Button>
-          </PermissionGate>
-          <PermissionGate permission={PERMISSIONS.workflowsWrite}>
+          )}
+          {hasScopedPermission(PERMISSIONS.workflowsWrite, scopeChain) && (
             <Button variant="primary" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
               {saveMutation.isPending ? "Saving…" : dirty ? "Save changes" : "Saved"}
             </Button>
-          </PermissionGate>
-          <PermissionGate permission={PERMISSIONS.workflowsExecute}>
+          )}
+          {hasScopedPermission(PERMISSIONS.workflowsExecute, scopeChain) && (
             <Button variant="primary" onClick={handleRun} disabled={running}>
               <IconPlay width={13} height={13} /> {running ? "Running…" : "Run"}
             </Button>
-          </PermissionGate>
+          )}
         </div>
       </div>
 

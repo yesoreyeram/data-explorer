@@ -35,6 +35,7 @@ type CreateInput struct {
 	Description string
 	Config      json.RawMessage
 	Secret      map[string]string
+	FolderID    string
 	CreatedBy   string
 }
 
@@ -54,12 +55,15 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (domain.Connection
 		Description:     in.Description,
 		Config:          in.Config,
 		SecretEncrypted: encrypted,
+		FolderID:        in.FolderID,
 		CreatedBy:       in.CreatedBy,
 	})
 }
 
-func (s *Service) List(ctx context.Context) ([]domain.Connection, error) {
-	return s.repo.List(ctx)
+// List returns connections, optionally restricted to a set of folder ids
+// (and their descendants) - see ListFilter.
+func (s *Service) List(ctx context.Context, f ListFilter) ([]domain.Connection, error) {
+	return s.repo.List(ctx, f)
 }
 
 func (s *Service) Get(ctx context.Context, id string) (domain.Connection, error) {
@@ -70,12 +74,13 @@ type UpdateInput struct {
 	Name        string
 	Description string
 	Config      json.RawMessage
+	FolderID    string
 	// Secret is nil when the caller does not want to change the stored secret.
 	Secret map[string]string
 }
 
 func (s *Service) Update(ctx context.Context, id string, in UpdateInput) (domain.Connection, error) {
-	params := updateParams{Name: in.Name, Description: in.Description, Config: in.Config}
+	params := updateParams{Name: in.Name, Description: in.Description, Config: in.Config, FolderID: in.FolderID}
 	if in.Secret != nil {
 		encrypted, err := s.encryptSecret(in.Secret)
 		if err != nil {

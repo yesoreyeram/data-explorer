@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/yesoreyeram/data-explorer/backend/internal/domain"
@@ -15,6 +16,7 @@ import (
 
 var ErrNotFound = errors.New("connection not found")
 var ErrConflict = errors.New("a connection with this name already exists")
+var ErrFolderNotFound = errors.New("folder not found")
 
 type Repository struct {
 	db *pgxpool.Pool
@@ -24,14 +26,14 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 	return &Repository{db: db}
 }
 
-const connectionColumns = `id, name, type, description, config, status, last_tested_at, last_error,
+const connectionColumns = `id, name, type, description, config, status, folder_id, last_tested_at, last_error,
 	last_error_code, last_error_remediation, last_check_duration_ms, created_by, created_at, updated_at`
 
 func scanConnection(row interface {
 	Scan(dest ...any) error
 }) (domain.Connection, error) {
 	var c domain.Connection
-	err := row.Scan(&c.ID, &c.Name, &c.Type, &c.Description, &c.Config, &c.Status, &c.LastTestedAt, &c.LastError,
+	err := row.Scan(&c.ID, &c.Name, &c.Type, &c.Description, &c.Config, &c.Status, &c.FolderID, &c.LastTestedAt, &c.LastError,
 		&c.LastErrorCode, &c.LastErrorRemediation, &c.LastCheckDurationMs, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt)
 	return c, err
 }
@@ -42,28 +44,46 @@ type createParams struct {
 	Description     string
 	Config          json.RawMessage
 	SecretEncrypted string
+	FolderID        string
 	CreatedBy       string
 }
 
 func (r *Repository) Create(ctx context.Context, p createParams) (domain.Connection, error) {
 	row := r.db.QueryRow(ctx,
-		`INSERT INTO connections (name, type, description, config, secret_encrypted, created_by)
-		 VALUES ($1, $2, $3, $4, $5, $6)
+		`INSERT INTO connections (name, type, description, config, secret_encrypted, folder_id, created_by)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)
 		 RETURNING `+connectionColumns,
-		p.Name, p.Type, p.Description, p.Config, p.SecretEncrypted, p.CreatedBy,
+		p.Name, p.Type, p.Description, p.Config, p.SecretEncrypted, p.FolderID, p.CreatedBy,
 	)
 	c, err := scanConnection(row)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return domain.Connection{}, ErrConflict
 		}
+		if isForeignKeyViolation(err) {
+			return domain.Connection{}, ErrFolderNotFound
+		}
 		return domain.Connection{}, fmt.Errorf("insert connection: %w", err)
 	}
 	return c, nil
 }
 
-func (r *Repository) List(ctx context.Context) ([]domain.Connection, error) {
-	rows, err := r.db.Query(ctx, `SELECT `+connectionColumns+` FROM connections ORDER BY name`)
+// ListFilter scopes which connections List returns. FolderIDs nil means no
+// restriction (the caller holds connections:read globally); non-nil
+// restricts to connections whose folder is one of these ids or a
+// descendant of one of them - see rbac.Principal.GrantedFolderIDs.
+type ListFilter struct {
+	FolderIDs []string
+}
+
+func (r *Repository) List(ctx context.Context, f ListFilter) ([]domain.Connection, error) {
+	where := ""
+	args := []any{}
+	if f.FolderIDs != nil {
+		args = append(args, f.FolderIDs)
+		where = ` WHERE folder_id IN (SELECT id FROM folders WHERE id::text = ANY($1) OR ancestor_ids && $1)`
+	}
+	rows, err := r.db.Query(ctx, `SELECT `+connectionColumns+` FROM connections`+where+` ORDER BY name`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query connections: %w", err)
 	}
@@ -110,6 +130,7 @@ type updateParams struct {
 	Name        string
 	Description string
 	Config      json.RawMessage
+	FolderID    string
 	// SecretEncrypted is a pointer so callers can distinguish "leave the
 	// existing secret untouched" (nil) from "replace it" (non-nil).
 	SecretEncrypted *string
@@ -121,19 +142,19 @@ func (r *Repository) Update(ctx context.Context, id string, p updateParams) (dom
 	}
 	if p.SecretEncrypted != nil {
 		row = r.db.QueryRow(ctx,
-			`UPDATE connections SET name = $1, description = $2, config = $3, secret_encrypted = $4,
+			`UPDATE connections SET name = $1, description = $2, config = $3, secret_encrypted = $4, folder_id = $5,
 			 status = 'unverified', last_tested_at = NULL, last_error = '', last_error_code = '',
-			 last_error_remediation = '', last_check_duration_ms = 0, updated_at = now() WHERE id = $5
+			 last_error_remediation = '', last_check_duration_ms = 0, updated_at = now() WHERE id = $6
 			 RETURNING `+connectionColumns,
-			p.Name, p.Description, p.Config, *p.SecretEncrypted, id,
+			p.Name, p.Description, p.Config, *p.SecretEncrypted, p.FolderID, id,
 		)
 	} else {
 		row = r.db.QueryRow(ctx,
-			`UPDATE connections SET name = $1, description = $2, config = $3,
+			`UPDATE connections SET name = $1, description = $2, config = $3, folder_id = $4,
 			 status = 'unverified', last_tested_at = NULL, last_error = '', last_error_code = '',
-			 last_error_remediation = '', last_check_duration_ms = 0, updated_at = now() WHERE id = $4
+			 last_error_remediation = '', last_check_duration_ms = 0, updated_at = now() WHERE id = $5
 			 RETURNING `+connectionColumns,
-			p.Name, p.Description, p.Config, id,
+			p.Name, p.Description, p.Config, p.FolderID, id,
 		)
 	}
 	c, err := scanConnection(row)
@@ -143,6 +164,9 @@ func (r *Repository) Update(ctx context.Context, id string, p updateParams) (dom
 		}
 		if isUniqueViolation(err) {
 			return domain.Connection{}, ErrConflict
+		}
+		if isForeignKeyViolation(err) {
+			return domain.Connection{}, ErrFolderNotFound
 		}
 		return domain.Connection{}, fmt.Errorf("update connection: %w", err)
 	}
@@ -191,6 +215,14 @@ func isUniqueViolation(err error) bool {
 	var pgErr interface{ SQLState() string }
 	if errors.As(err, &pgErr) {
 		return pgErr.SQLState() == "23505"
+	}
+	return false
+}
+
+func isForeignKeyViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "23503"
 	}
 	return false
 }
