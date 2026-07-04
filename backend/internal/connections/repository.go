@@ -122,14 +122,16 @@ func (r *Repository) Update(ctx context.Context, id string, p updateParams) (dom
 	if p.SecretEncrypted != nil {
 		row = r.db.QueryRow(ctx,
 			`UPDATE connections SET name = $1, description = $2, config = $3, secret_encrypted = $4,
-			 status = 'unverified', updated_at = now() WHERE id = $5
+			 status = 'unverified', last_tested_at = NULL, last_error = '', last_error_code = '',
+			 last_error_remediation = '', last_check_duration_ms = 0, updated_at = now() WHERE id = $5
 			 RETURNING `+connectionColumns,
 			p.Name, p.Description, p.Config, *p.SecretEncrypted, id,
 		)
 	} else {
 		row = r.db.QueryRow(ctx,
 			`UPDATE connections SET name = $1, description = $2, config = $3,
-			 status = 'unverified', updated_at = now() WHERE id = $4
+			 status = 'unverified', last_tested_at = NULL, last_error = '', last_error_code = '',
+			 last_error_remediation = '', last_check_duration_ms = 0, updated_at = now() WHERE id = $4
 			 RETURNING `+connectionColumns,
 			p.Name, p.Description, p.Config, id,
 		)
@@ -162,6 +164,8 @@ func (r *Repository) Delete(ctx context.Context, id string) error {
 // system - see connections.HealthError/Classify for where Code/Remediation
 // come from.
 type TestResult struct {
+	Status           domain.ConnectionStatus
+	LastTestedAt     time.Time
 	Healthy          bool
 	Error            string
 	ErrorCode        string
@@ -169,7 +173,7 @@ type TestResult struct {
 	DurationMs       int64
 }
 
-func (r *Repository) SetTestResult(ctx context.Context, id string, res TestResult) error {
+func (r *Repository) SetTestResult(ctx context.Context, id string, res TestResult) (time.Time, error) {
 	status := domain.ConnectionStatusHealthy
 	if !res.Healthy {
 		status = domain.ConnectionStatusUnhealthy
@@ -180,7 +184,7 @@ func (r *Repository) SetTestResult(ctx context.Context, id string, res TestResul
 		 last_error_code = $4, last_error_remediation = $5, last_check_duration_ms = $6 WHERE id = $7`,
 		status, now, res.Error, res.ErrorCode, res.ErrorRemediation, res.DurationMs, id,
 	)
-	return err
+	return now, err
 }
 
 func isUniqueViolation(err error) bool {

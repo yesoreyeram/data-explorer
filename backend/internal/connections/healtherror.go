@@ -229,6 +229,9 @@ func classifyByMessage(err error) *HealthError {
 	case containsAny(msg, "rate limit", "too many requests", "throttl", " 429"):
 		return newHealthError(ErrCodeRateLimited, "The target is rate-limiting this connection.",
 			"Slow down how often this connection is queried, or ask the provider to raise your quota.", err)
+	case containsAny(msg, "is required", "must be a valid", "invalid config", "invalid configuration", "configure authentication"):
+		return newHealthError(ErrCodeInvalidConfig, "The connection configuration is invalid.",
+			"Review the connection form for missing or invalid fields, then save it again.", err)
 	}
 	return newHealthError(ErrCodeUnknown, "Something went wrong reaching this connection.",
 		"See the technical detail below for what the underlying system reported.", err)

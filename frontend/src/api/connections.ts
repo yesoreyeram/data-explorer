@@ -34,6 +34,9 @@ export async function deleteConnection(id: string): Promise<void> {
 }
 
 export interface TestConnectionResult {
+  status: Connection["status"];
+  lastTestedAt: string;
+  durationMs: number;
   healthy: boolean;
   error?: string;
   errorCode?: ErrorCode;

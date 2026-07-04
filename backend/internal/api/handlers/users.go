@@ -58,6 +58,9 @@ func (h *Handlers) SetUserStatus(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusNotFound, "not_found", "user not found")
 		return
 	}
+	if req.Status == domain.UserStatusSuspended {
+		_ = h.Auth.RevokeUserSessions(r.Context(), id)
+	}
 
 	h.recordAudit(r, "user.status_change", "user", id, audit.OutcomeSuccess, map[string]any{"status": req.Status})
 	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": string(req.Status)})

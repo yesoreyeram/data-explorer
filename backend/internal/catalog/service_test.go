@@ -26,10 +26,10 @@ func TestSearch(t *testing.T) {
 		}
 	})
 
-	t.Run("query matches category", func(t *testing.T) {
+	t.Run("query does not match category", func(t *testing.T) {
 		got := svc.Search("commerce", "", "")
-		if len(got) != 2 {
-			t.Fatalf("got %d entries, want 2 (shopify-rest, shopify-graphql)", len(got))
+		if len(got) != 0 {
+			t.Fatalf("got %d entries, want 0 because q only searches name and description", len(got))
 		}
 	})
 
@@ -63,6 +63,15 @@ func TestSearch(t *testing.T) {
 		got := svc.Search("this-does-not-exist-anywhere", "", "")
 		if len(got) != 0 {
 			t.Fatalf("got %d entries, want 0", len(got))
+		}
+	})
+
+	t.Run("results are deterministic by name", func(t *testing.T) {
+		got := svc.Search("", "", "")
+		for i := 1; i < len(got); i++ {
+			if got[i-1].Name > got[i].Name {
+				t.Fatalf("entries are not sorted by name: %q before %q", got[i-1].Name, got[i].Name)
+			}
 		}
 	})
 }

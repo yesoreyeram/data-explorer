@@ -95,22 +95,22 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 // A failure is classified (see HealthError/Classify) before it's persisted
 // or returned, so callers get a stable code and an actionable next step
 // instead of just whatever string the underlying driver/SDK produced.
-func (s *Service) Test(ctx context.Context, id string) error {
+func (s *Service) Test(ctx context.Context, id string) (TestResult, error) {
 	if !s.limiter.Allow(id) {
-		return ErrRateLimited
+		return TestResult{}, ErrRateLimited
 	}
 
 	conn, err := s.repo.Get(ctx, id)
 	if err != nil {
-		return err
+		return TestResult{}, err
 	}
 	connector, err := s.registry.Get(string(conn.Type))
 	if err != nil {
-		return err
+		return TestResult{}, err
 	}
 	secret, err := s.decryptSecretFor(ctx, id)
 	if err != nil {
-		return err
+		return TestResult{}, err
 	}
 
 	start := time.Now()
@@ -125,13 +125,19 @@ func (s *Service) Test(ctx context.Context, id string) error {
 		result.ErrorCode = string(classified.Code)
 		result.ErrorRemediation = classified.Remediation
 	}
-	if err := s.repo.SetTestResult(ctx, id, result); err != nil {
-		return fmt.Errorf("record test result: %w", err)
+	testedAt, err := s.repo.SetTestResult(ctx, id, result)
+	if err != nil {
+		return TestResult{}, fmt.Errorf("record test result: %w", err)
+	}
+	result.LastTestedAt = testedAt
+	result.Status = domain.ConnectionStatusHealthy
+	if !result.Healthy {
+		result.Status = domain.ConnectionStatusUnhealthy
 	}
 	if classified != nil {
-		return classified
+		return result, classified
 	}
-	return nil
+	return result, nil
 }
 
 // Query executes a read query through the connection's connector and
