@@ -141,6 +141,7 @@ func (h *Handlers) ExecuteWorkflow(w http.ResponseWriter, r *http.Request) {
 	} else {
 		meta["rowCount"] = output.NumRows()
 		meta["durationMs"] = execution.DurationMs
+		h.observeFrameWarnings(output)
 	}
 	h.recordAudit(r, "workflow.execute", "workflow", id, outcome, meta)
 

@@ -95,8 +95,9 @@ func run() error {
 
 	metrics := observability.NewMetrics()
 
-	h := handlers.New(authSvc, authRepo, auditSvc, connSvc, wfSvc, catalogSvc, cfg.Env == "production", cfg.Auth.RefreshTokenTTL)
-	healthHandler := handlers.NewHealthHandler(pool)
+	shutdownState := handlers.NewShutdownState()
+	h := handlers.New(authSvc, authRepo, auditSvc, connSvc, wfSvc, catalogSvc, metrics, cfg.Env == "production", cfg.Auth.RefreshTokenTTL)
+	healthHandler := handlers.NewHealthHandler(pool, wfSvc, shutdownState)
 
 	router := api.NewRouter(cfg, h, healthHandler, tokenManager, metrics)
 
@@ -123,6 +124,7 @@ func run() error {
 	select {
 	case <-ctx.Done():
 		log.Info("shutdown signal received")
+		shutdownState.Begin(cfg.HTTP.ShutdownTimeout)
 	case err := <-serverErr:
 		return fmt.Errorf("http server error: %w", err)
 	}

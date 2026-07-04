@@ -8,7 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
+	"strconv"
+	"time"
 )
 
 // MaxRequestBodyBytes bounds every JSON request body decoded through
@@ -55,6 +58,30 @@ func WriteErrorDetailed(w http.ResponseWriter, status int, code, message, remedi
 	WriteJSON(w, status, body)
 }
 
+type RateLimitBody struct {
+	Code         string `json:"code"`
+	Quota        int    `json:"quota"`
+	Used         int    `json:"used"`
+	WindowMS     int64  `json:"window_ms"`
+	RetryAfterMS int64  `json:"retry_after_ms"`
+	Remediation  string `json:"remediation"`
+}
+
+func WriteRateLimit(w http.ResponseWriter, quota, used int, window, retryAfter time.Duration, remediation string) {
+	if retryAfter <= 0 {
+		retryAfter = time.Second
+	}
+	w.Header().Set("Retry-After", strconvSeconds(retryAfter))
+	WriteJSON(w, http.StatusTooManyRequests, RateLimitBody{
+		Code:         "rate_limited",
+		Quota:        quota,
+		Used:         used,
+		WindowMS:     window.Milliseconds(),
+		RetryAfterMS: retryAfter.Milliseconds(),
+		Remediation:  remediation,
+	})
+}
+
 // WriteDecodeError maps a DecodeJSON error to the appropriate response: 413
 // for a request that hit the size guardrail, 400 for anything else
 // (malformed JSON, unknown fields, ...).
@@ -86,10 +113,19 @@ func DecodeJSON(r *http.Request, v any) error {
 }
 
 func ClientIP(r *http.Request) string {
-	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-		return fwd
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err == nil && host != "" {
+		return host
 	}
 	return r.RemoteAddr
+}
+
+func strconvSeconds(d time.Duration) string {
+	seconds := int64(d.Round(time.Second) / time.Second)
+	if seconds < 1 {
+		seconds = 1
+	}
+	return strconv.FormatInt(seconds, 10)
 }
 
 func Drain(body io.ReadCloser) {

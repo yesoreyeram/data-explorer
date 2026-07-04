@@ -40,6 +40,7 @@ func NewRouter(cfg *config.Config, h *handlers.Handlers, health *handlers.Health
 
 	r.Get("/healthz", health.Healthz)
 	r.Get("/readyz", health.Readyz)
+	r.Get("/status/shutdown", health.ShutdownStatus)
 	r.Handle("/metrics", metrics.Handler())
 
 	r.Route("/api/v1", func(r chi.Router) {

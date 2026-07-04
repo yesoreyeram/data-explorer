@@ -180,6 +180,15 @@ func (r *Repository) CreateExecution(ctx context.Context, workflowID, triggeredB
 	return ex, nil
 }
 
+func (r *Repository) CreateSkippedExecution(ctx context.Context, workflowID, triggeredBy, reason string) error {
+	_, err := r.db.Exec(ctx,
+		`INSERT INTO workflow_executions (workflow_id, status, triggered_by, finished_at, error)
+		 VALUES ($1, $2, $3, now(), $4)`,
+		workflowID, domain.ExecutionStatusSkipped, triggeredBy, reason,
+	)
+	return err
+}
+
 func (r *Repository) FinishExecution(ctx context.Context, id string, status domain.ExecutionStatus, durationMs int64, errMsg string, nodeResults json.RawMessage) error {
 	_, err := r.db.Exec(ctx,
 		`UPDATE workflow_executions SET status = $1, finished_at = now(), duration_ms = $2, error = $3, node_results = $4 WHERE id = $5`,

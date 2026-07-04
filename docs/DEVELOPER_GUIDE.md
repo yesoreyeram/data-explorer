@@ -65,6 +65,16 @@ npm run lint
 npm run build
 ```
 
+Guardrail UI conventions:
+
+- Render `DataFrame.meta.warnings` as user-visible soft warnings without
+  treating them as failed operations.
+- Before CSV export, warn when a frame is truncated or above the 10K visible
+  row export cap; offer a bounded export and a refine-query escape hatch.
+- Workflow node run metadata (`rowsOut`, `rowCap`, `truncated`, `warnings`,
+  `timeoutMs`) should be surfaced on the canvas with text labels as well as
+  warning/danger styling.
+
 ### 4. First login
 
 Register a user through the UI (or `POST /api/v1/auth/register`). New

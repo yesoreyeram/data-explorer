@@ -233,14 +233,18 @@ export interface Workflow {
   scheduleLastRun?: string;
 }
 
-export type ExecutionStatus = "running" | "succeeded" | "failed";
+export type ExecutionStatus = "running" | "succeeded" | "failed" | "skipped";
 
 export interface NodeExecutionResult {
   nodeId: string;
   nodeType: string;
   nodeName: string;
   rowsOut: number;
+  rowCap?: number;
+  truncated?: boolean;
   durationMs: number;
+  timeoutMs?: number;
+  warnings?: string[];
   error?: string;
 }
 

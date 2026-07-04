@@ -62,8 +62,8 @@ func (l *IPRateLimiter) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key := httpx.ClientIP(r)
 		if !l.get(key).Allow() {
-			w.Header().Set("Retry-After", "1")
-			httpx.WriteError(w, http.StatusTooManyRequests, "rate_limited", "too many requests, slow down")
+			window := time.Duration(float64(time.Second) * float64(l.burst) / float64(l.r))
+			httpx.WriteRateLimit(w, l.burst, l.burst, window, time.Second, "Too many requests from this client. Retry after the indicated delay or reduce request frequency.")
 			return
 		}
 		next.ServeHTTP(w, r)

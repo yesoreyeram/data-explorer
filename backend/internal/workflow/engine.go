@@ -12,14 +12,19 @@ import (
 // MaxRowsPerNode bounds the output of any single node, regardless of type -
 // see the guardrail comment in Run for why this matters most for join.
 const MaxRowsPerNode = 100_000
+const MaxNodeExecutionDuration = 60 * time.Second
 
 type NodeExecutionResult struct {
-	NodeID     string `json:"nodeId"`
-	NodeType   string `json:"nodeType"`
-	NodeName   string `json:"nodeName"`
-	RowsOut    int    `json:"rowsOut"`
-	DurationMs int64  `json:"durationMs"`
-	Error      string `json:"error,omitempty"`
+	NodeID     string   `json:"nodeId"`
+	NodeType   string   `json:"nodeType"`
+	NodeName   string   `json:"nodeName"`
+	RowsOut    int      `json:"rowsOut"`
+	RowCap     int      `json:"rowCap"`
+	Truncated  bool     `json:"truncated"`
+	DurationMs int64    `json:"durationMs"`
+	TimeoutMs  int64    `json:"timeoutMs"`
+	Warnings   []string `json:"warnings,omitempty"`
+	Error      string   `json:"error,omitempty"`
 }
 
 type RunResult struct {
@@ -82,15 +87,19 @@ func (e *Engine) Run(ctx context.Context, def Definition, deps nodes.Deps) (RunR
 			return result, fmt.Errorf("node %q: %w", id, err)
 		}
 
+		nodeCtx, cancel := context.WithTimeout(ctx, MaxNodeExecutionDuration)
 		start := time.Now()
-		out, execErr := executor.Execute(ctx, deps, execInput)
+		out, execErr := executor.Execute(nodeCtx, deps, execInput)
+		cancel()
 		duration := time.Since(start)
 
 		nodeResult := NodeExecutionResult{
 			NodeID:     id,
 			NodeType:   string(node.Type),
 			NodeName:   node.Name,
+			RowCap:     MaxRowsPerNode,
 			DurationMs: duration.Milliseconds(),
+			TimeoutMs:  MaxNodeExecutionDuration.Milliseconds(),
 		}
 		if execErr != nil {
 			nodeResult.Error = execErr.Error()
@@ -111,8 +120,15 @@ func (e *Engine) Run(ctx context.Context, def Definition, deps nodes.Deps) (RunR
 		// connector-level guardrail to catch it. Capping every node's output
 		// here protects the rest of the pipeline regardless of node type.
 		out.LimitRows(MaxRowsPerNode)
+		if out.Meta.Truncated {
+			out.Meta = out.Meta.WithWarning("Row cap reached at %d rows. Add a filter node or narrow the source query to reduce rows.", MaxRowsPerNode)
+		} else if out.NumRows() >= int(float64(MaxRowsPerNode)*0.8) {
+			out.Meta = out.Meta.WithWarning("Row count is %d, at least 80%% of the %d row cap. Add a filter node or narrow the source query before the workflow reaches the hard limit.", out.NumRows(), MaxRowsPerNode)
+		}
 
 		nodeResult.RowsOut = out.NumRows()
+		nodeResult.Truncated = out.Meta.Truncated
+		nodeResult.Warnings = append([]string(nil), out.Meta.Warnings...)
 		result.NodeResults = append(result.NodeResults, nodeResult)
 		outputs[id] = out
 		result.Output = out

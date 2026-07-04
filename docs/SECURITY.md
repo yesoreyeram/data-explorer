@@ -157,6 +157,22 @@ every outbound-call guardrail so no connector has to reimplement them:
   compromise of the API process at rest never exposes a long-lived token
   that wasn't already about to be re-minted.
 
+## Guardrail disclosure and shutdown probes
+
+- Guardrail warnings and failures use the existing health-error taxonomy and
+  may name only the limit, threshold, observed value, and remediation. They
+  must not include SQL text, request/response bodies, headers, connection
+  config, secrets, tokens, or decrypted credentials.
+- `429` responses include quota metadata (`quota`, `used`, `window_ms`,
+  `retry_after_ms`) and still set `Retry-After`. The limiter key is derived
+  from the socket remote address; caller-supplied `X-Forwarded-For` is not
+  trusted by the in-process limiter.
+- `/status/shutdown` is unauthenticated for load balancer probes and returns
+  only aggregate operational data (`status`, `draining`, `inflightRuns`,
+  `remainingDrainMs`) with `Cache-Control: no-store`. It must never expose
+  workflow names, user identities, connection IDs, query text, rows, errors,
+  or credentials.
+
 ## Cloud provider connectors (AWS / GCP / Azure)
 
 The `aws`, `gcp`, and `azure` connection types query native cloud services
