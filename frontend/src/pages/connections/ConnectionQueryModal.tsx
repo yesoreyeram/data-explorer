@@ -7,6 +7,7 @@ import { CloudQueryFields } from "../../components/CloudQueryFields";
 import { queryConnection } from "../../api/connections";
 import { extractErrorMessage } from "../../api/client";
 import type { CloudQuerySpec, Connection, DataFrame, PaginationSpec } from "../../api/types";
+import { Button } from "../../components/ui";
 
 export function ConnectionQueryModal({ connection, onClose }: { connection: Connection; onClose: () => void }) {
   const isSQL = connection.type === "postgres" || connection.type === "mysql";
@@ -111,9 +112,9 @@ export function ConnectionQueryModal({ connection, onClose }: { connection: Conn
             onChange={(e) => setRowLimit(Number(e.target.value))}
           />
         </div>
-        <button className="btn btn-primary" type="button" onClick={runQuery} disabled={running} style={{ alignSelf: "flex-end" }}>
+        <Button variant="primary" onClick={runQuery} disabled={running} style={{ alignSelf: "flex-end" }}>
           {running ? "Running..." : "Run"}
-        </button>
+        </Button>
       </div>
 
       {error && <div className="error-banner">{error}</div>}

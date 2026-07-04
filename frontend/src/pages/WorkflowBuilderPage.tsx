@@ -26,6 +26,7 @@ import { PERMISSIONS } from "../lib/permissions";
 import { IconPlay } from "../components/icons";
 import { FlowNode, type FlowNodeData } from "./workflow/FlowNode";
 import { NodeConfigPanel } from "./workflow/NodeConfigPanel";
+import { Button } from "../components/ui";
 
 const nodeTypes: NodeTypes = { flowNode: FlowNode };
 
@@ -244,9 +245,7 @@ export function WorkflowBuilderPage() {
           </p>
         </div>
         <div className="toolbar">
-          <button className="btn" type="button" onClick={() => navigate("/workflows")}>
-            Back
-          </button>
+          <Button onClick={() => navigate("/workflows")}>Back</Button>
           <select
             className="select"
             style={{ width: 110 }}
@@ -260,14 +259,14 @@ export function WorkflowBuilderPage() {
             <option value="published">Published</option>
           </select>
           <PermissionGate permission={PERMISSIONS.workflowsWrite}>
-            <button className="btn btn-primary" type="button" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
+            <Button variant="primary" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
               {saveMutation.isPending ? "Saving…" : dirty ? "Save changes" : "Saved"}
-            </button>
+            </Button>
           </PermissionGate>
           <PermissionGate permission={PERMISSIONS.workflowsExecute}>
-            <button className="btn btn-primary" type="button" onClick={handleRun} disabled={running}>
+            <Button variant="primary" onClick={handleRun} disabled={running}>
               <IconPlay width={13} height={13} /> {running ? "Running…" : "Run"}
-            </button>
+            </Button>
           </PermissionGate>
         </div>
       </div>

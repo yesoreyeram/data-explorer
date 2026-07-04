@@ -1,33 +1,27 @@
-import { useNavigate } from "react-router-dom";
+import { useLocation } from "react-router-dom";
 
-import { useAuthStore } from "../../state/authStore";
 import { ThemeSwitcher } from "../ThemeSwitcher";
-import { IconLogout } from "../icons";
+
+const SECTION_TITLES: { prefix: string; title: string }[] = [
+  { prefix: "/connections", title: "Connections" },
+  { prefix: "/workflows", title: "Workflows" },
+  { prefix: "/audit-log", title: "Audit log" },
+  { prefix: "/users", title: "Users & roles" },
+];
+
+function pageTitle(pathname: string): string {
+  if (pathname === "/") return "Dashboard";
+  if (/^\/workflows\/[^/]+$/.test(pathname)) return "Workflow builder";
+  return SECTION_TITLES.find((s) => pathname.startsWith(s.prefix))?.title ?? "";
+}
 
 export function Topbar() {
-  const user = useAuthStore((s) => s.user);
-  const logout = useAuthStore((s) => s.logout);
-  const navigate = useNavigate();
-
-  async function handleLogout() {
-    await logout();
-    navigate("/login", { replace: true });
-  }
+  const location = useLocation();
 
   return (
     <header className="layout-topbar">
-      <div />
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <ThemeSwitcher />
-        {user && (
-          <>
-            <span style={{ color: "var(--text-secondary)" }}>{user.displayName}</span>
-            <button type="button" className="icon-btn" title="Log out" onClick={handleLogout}>
-              <IconLogout width={15} height={15} />
-            </button>
-          </>
-        )}
-      </div>
+      <span className="page-title">{pageTitle(location.pathname)}</span>
+      <ThemeSwitcher />
     </header>
   );
 }

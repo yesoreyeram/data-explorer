@@ -6,6 +6,7 @@ import { listWorkflows } from "../api/workflows";
 import { useAuthStore } from "../state/authStore";
 import { PERMISSIONS } from "../lib/permissions";
 import { StatusBadge } from "../components/StatusBadge";
+import { Card, CardBody, CardHeader, CardTitle, StatTile } from "../components/ui";
 
 export function DashboardPage() {
   const user = useAuthStore((s) => s.user);
@@ -37,33 +38,21 @@ export function DashboardPage() {
       </div>
 
       <div className="stat-grid">
-        <div className="stat-tile">
-          <div className="stat-label">Connections</div>
-          <div className="stat-value">{connections.length}</div>
-        </div>
-        <div className="stat-tile">
-          <div className="stat-label">Healthy connections</div>
-          <div className="stat-value">{healthyConnections}</div>
-        </div>
-        <div className="stat-tile">
-          <div className="stat-label">Workflows</div>
-          <div className="stat-value">{workflows.length}</div>
-        </div>
-        <div className="stat-tile">
-          <div className="stat-label">Published workflows</div>
-          <div className="stat-value">{publishedWorkflows}</div>
-        </div>
+        <StatTile label="Connections" value={connections.length} />
+        <StatTile label="Healthy connections" value={healthyConnections} />
+        <StatTile label="Workflows" value={workflows.length} />
+        <StatTile label="Published workflows" value={publishedWorkflows} />
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-        <div className="card">
-          <div className="card-header">
-            <h3>Recent connections</h3>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <Card>
+          <CardHeader>
+            <CardTitle>Recent connections</CardTitle>
             <Link to="/connections" className="btn btn-sm btn-ghost">
               View all
             </Link>
-          </div>
-          <div className="card-body">
+          </CardHeader>
+          <CardBody>
             {connections.length === 0 ? (
               <div className="empty-state">No connections yet.</div>
             ) : (
@@ -78,17 +67,17 @@ export function DashboardPage() {
                 ))}
               </div>
             )}
-          </div>
-        </div>
+          </CardBody>
+        </Card>
 
-        <div className="card">
-          <div className="card-header">
-            <h3>Recent workflows</h3>
+        <Card>
+          <CardHeader>
+            <CardTitle>Recent workflows</CardTitle>
             <Link to="/workflows" className="btn btn-sm btn-ghost">
               View all
             </Link>
-          </div>
-          <div className="card-body">
+          </CardHeader>
+          <CardBody>
             {workflows.length === 0 ? (
               <div className="empty-state">No workflows yet.</div>
             ) : (
@@ -101,8 +90,8 @@ export function DashboardPage() {
                 ))}
               </div>
             )}
-          </div>
-        </div>
+          </CardBody>
+        </Card>
       </div>
     </div>
   );

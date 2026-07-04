@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 
 import { extractErrorMessage } from "../api/client";
 import { useAuthStore } from "../state/authStore";
+import { Button, Card, CardBody, Field, Input } from "../components/ui";
 
 export function RegisterPage() {
   const registerUser = useAuthStore((s) => s.register);
@@ -30,41 +31,30 @@ export function RegisterPage() {
 
   return (
     <div className="auth-shell">
-      <div className="card auth-card">
-        <div className="card-body">
+      <Card className="auth-card">
+        <CardBody>
           <h1 className="panel-title">Create account</h1>
           <p className="panel-subtitle">New accounts start with read-only viewer access.</p>
 
           {error && <div className="error-banner">{error}</div>}
 
           <form onSubmit={handleSubmit}>
-            <div className="field">
-              <label htmlFor="displayName">Full name</label>
-              <input
-                id="displayName"
-                className="input"
-                required
-                value={displayName}
-                onChange={(e) => setDisplayName(e.target.value)}
-              />
-            </div>
-            <div className="field">
-              <label htmlFor="email">Email</label>
-              <input
+            <Field htmlFor="displayName" label="Full name">
+              <Input id="displayName" required value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
+            </Field>
+            <Field htmlFor="email" label="Email">
+              <Input
                 id="email"
-                className="input"
                 type="email"
                 autoComplete="email"
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
               />
-            </div>
-            <div className="field">
-              <label htmlFor="password">Password</label>
-              <input
+            </Field>
+            <Field htmlFor="password" label="Password" hint="At least 12 characters.">
+              <Input
                 id="password"
-                className="input"
                 type="password"
                 autoComplete="new-password"
                 required
@@ -72,18 +62,17 @@ export function RegisterPage() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />
-              <span className="field-hint">At least 12 characters.</span>
-            </div>
-            <button className="btn btn-primary" type="submit" disabled={submitting} style={{ width: "100%" }}>
+            </Field>
+            <Button variant="primary" type="submit" disabled={submitting} style={{ width: "100%" }}>
               {submitting ? "Creating account..." : "Create account"}
-            </button>
+            </Button>
           </form>
 
           <p className="field-hint" style={{ marginTop: 12, textAlign: "center" }}>
             Already have an account? <Link to="/login">Sign in</Link>
           </p>
-        </div>
-      </div>
+        </CardBody>
+      </Card>
     </div>
   );
 }

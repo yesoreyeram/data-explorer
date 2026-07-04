@@ -359,13 +359,32 @@ A standard Vite + React + TypeScript SPA:
 
 - `src/api/` - typed fetch wrappers (axios) per resource, plus `client.ts`
   which centralizes auth header injection and silent access-token refresh.
-- `src/state/` - two small Zustand stores: `authStore` (session, permissions)
-  and `themeStore` (light/dark/system, persisted to `localStorage`).
-- `src/components/` - shared UI (layout shell, data table, modal, permission
-  gate) with a small hand-rolled CSS design system (`src/styles/app.css`)
-  built on CSS custom properties, so the whole app re-themes by swapping one
-  attribute (`data-theme` on `<html>`). `DataFrameView` renders a dataframe's
-  schema (typed column badges), rows, and metadata (row/col counts, timing,
+- `src/state/` - small Zustand stores: `authStore` (session, permissions),
+  `themeStore` (light/dark/system, persisted to `localStorage`), and
+  `sidebarStore` (collapsed/expanded, persisted the same way).
+- `src/index.css` - the design **tokens**: CSS custom properties for color,
+  spacing, radius, and the two fixed layout dimensions (sidebar width,
+  topbar height). The palette is deliberately near-monochrome - every
+  structural color (surfaces, borders, text) and the accent itself are
+  grayscale (accent = ink: near-black on light, near-white on dark); the
+  three status hues (success/warning/danger) are the only color left in the
+  system, and `Badge` (below) confines them to a small dot rather than a
+  filled chip. Light/dark/system all resolve to the same variable names, so
+  the whole app re-themes by swapping one attribute (`data-theme` on
+  `<html>`) with zero per-component branching.
+- `src/components/ui/` - the component **library**: `Button`, `IconButton`,
+  `Field`, `Input`, `Select`, `Textarea`, `Badge`, `Card`/`CardHeader`/
+  `CardBody`, `StatTile`. These are typed wrappers around the class names in
+  `src/styles/app.css` (`.btn`, `.input`, `.field`, ...), not a parallel
+  styling system - a raw `className="btn"` and a `<Button>` render
+  identically, so partially-migrated and fully-migrated screens never look
+  inconsistent. New UI should use these instead of raw class strings; see
+  the developer guide for the convention.
+- `src/components/` - shared UI beyond the primitives above: layout shell
+  (`layout/AppShell.tsx`, `Sidebar.tsx` - collapsible, with a user/logout
+  footer, `Topbar.tsx` - shows the current section title), `DataTable`,
+  `Modal`, `PermissionGate`. `DataFrameView` renders a dataframe's schema
+  (typed column badges), rows, and metadata (row/col counts, timing,
   source, lineage, truncation, warnings) as one unit, and `PaginationFields`
   is the pagination-strategy config form shared by the ad-hoc query modal
   and the workflow source node.

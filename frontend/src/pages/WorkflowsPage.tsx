@@ -9,6 +9,7 @@ import { PermissionGate } from "../components/PermissionGate";
 import { PERMISSIONS } from "../lib/permissions";
 import { IconPlus, IconTrash, IconWorkflow } from "../components/icons";
 import { Modal } from "../components/Modal";
+import { Button, Card, CardBody, Field, IconButton, Input } from "../components/ui";
 
 export function WorkflowsPage() {
   const navigate = useNavigate();
@@ -58,9 +59,9 @@ export function WorkflowsPage() {
           <p className="panel-subtitle">Pull, transform, and combine data with a visual pipeline.</p>
         </div>
         <PermissionGate permission={PERMISSIONS.workflowsWrite}>
-          <button className="btn btn-primary" type="button" onClick={() => setCreating(true)}>
+          <Button variant="primary" onClick={() => setCreating(true)}>
             <IconPlus width={14} height={14} /> New workflow
-          </button>
+          </Button>
         </PermissionGate>
       </div>
 
@@ -76,8 +77,8 @@ export function WorkflowsPage() {
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 12 }}>
           {workflows.map((wf) => (
-            <div key={wf.id} className="card" style={{ cursor: "pointer" }} onClick={() => navigate(`/workflows/${wf.id}`)}>
-              <div className="card-body">
+            <Card key={wf.id} style={{ cursor: "pointer" }} onClick={() => navigate(`/workflows/${wf.id}`)}>
+              <CardBody>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                   <strong>{wf.name}</strong>
                   <StatusBadge status={wf.status} />
@@ -86,20 +87,19 @@ export function WorkflowsPage() {
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11, color: "var(--text-tertiary)" }}>
                   <span>{wf.definition.nodes?.length ?? 0} nodes &middot; v{wf.version}</span>
                   <PermissionGate permission={PERMISSIONS.workflowsWrite}>
-                    <button
-                      className="icon-btn"
-                      title="Delete"
+                    <IconButton
+                      label="Delete"
                       onClick={(e) => {
                         e.stopPropagation();
                         handleDelete(wf.id, wf.name);
                       }}
                     >
                       <IconTrash width={13} height={13} />
-                    </button>
+                    </IconButton>
                   </PermissionGate>
                 </div>
-              </div>
-            </div>
+              </CardBody>
+            </Card>
           ))}
         </div>
       )}
@@ -110,25 +110,21 @@ export function WorkflowsPage() {
           onClose={() => setCreating(false)}
           footer={
             <>
-              <button className="btn" type="button" onClick={() => setCreating(false)}>
-                Cancel
-              </button>
-              <button className="btn btn-primary" type="submit" form="new-workflow-form" disabled={createMutation.isPending}>
+              <Button onClick={() => setCreating(false)}>Cancel</Button>
+              <Button variant="primary" type="submit" form="new-workflow-form" disabled={createMutation.isPending}>
                 {createMutation.isPending ? "Creating…" : "Create"}
-              </button>
+              </Button>
             </>
           }
         >
           {formError && <div className="error-banner">{formError}</div>}
           <form id="new-workflow-form" onSubmit={handleCreate}>
-            <div className="field">
-              <label htmlFor="wf-name">Name</label>
-              <input id="wf-name" className="input" required value={name} onChange={(e) => setName(e.target.value)} />
-            </div>
-            <div className="field">
-              <label htmlFor="wf-desc">Description</label>
-              <input id="wf-desc" className="input" value={description} onChange={(e) => setDescription(e.target.value)} />
-            </div>
+            <Field htmlFor="wf-name" label="Name">
+              <Input id="wf-name" required value={name} onChange={(e) => setName(e.target.value)} />
+            </Field>
+            <Field htmlFor="wf-desc" label="Description">
+              <Input id="wf-desc" value={description} onChange={(e) => setDescription(e.target.value)} />
+            </Field>
           </form>
         </Modal>
       )}

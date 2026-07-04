@@ -18,6 +18,7 @@ import { IconPlay, IconPlug, IconPlus, IconRefresh, IconTrash } from "../compone
 import { ConnectionFormModal } from "./connections/ConnectionFormModal";
 import { ConnectionQueryModal } from "./connections/ConnectionQueryModal";
 import { CatalogBrowserModal } from "./connections/CatalogBrowserModal";
+import { Button, IconButton } from "../components/ui";
 
 export function ConnectionsPage() {
   const queryClient = useQueryClient();
@@ -68,12 +69,12 @@ export function ConnectionsPage() {
         </div>
         <PermissionGate permission={PERMISSIONS.connectionsWrite}>
           <div style={{ display: "flex", gap: 8 }}>
-            <button className="btn" type="button" onClick={() => setCatalogOpen(true)}>
+            <Button onClick={() => setCatalogOpen(true)}>
               <IconPlug width={14} height={14} /> Browse catalog
-            </button>
-            <button className="btn btn-primary" type="button" onClick={() => setFormTarget("new")}>
+            </Button>
+            <Button variant="primary" onClick={() => setFormTarget("new")}>
               <IconPlus width={14} height={14} /> New connection
-            </button>
+            </Button>
           </div>
         </PermissionGate>
       </div>
@@ -119,29 +120,24 @@ export function ConnectionsPage() {
                 <td>
                   <div style={{ display: "flex", gap: 4 }}>
                     <PermissionGate permission={PERMISSIONS.connectionsTest}>
-                      <button
-                        className="icon-btn"
-                        title="Test connection"
-                        onClick={() => handleTest(c.id)}
-                        disabled={testingId === c.id}
-                      >
+                      <IconButton label="Test connection" onClick={() => handleTest(c.id)} disabled={testingId === c.id}>
                         <IconRefresh width={14} height={14} />
-                      </button>
+                      </IconButton>
                     </PermissionGate>
                     <PermissionGate permission={PERMISSIONS.connectionsRead}>
-                      <button className="icon-btn" title="Run query" onClick={() => setQueryTarget(c)}>
+                      <IconButton label="Run query" onClick={() => setQueryTarget(c)}>
                         <IconPlay width={14} height={14} />
-                      </button>
+                      </IconButton>
                     </PermissionGate>
                     <PermissionGate permission={PERMISSIONS.connectionsWrite}>
-                      <button className="icon-btn" title="Edit" onClick={() => setFormTarget(c)}>
+                      <IconButton label="Edit" onClick={() => setFormTarget(c)}>
                         <IconPlug width={14} height={14} />
-                      </button>
+                      </IconButton>
                     </PermissionGate>
                     <PermissionGate permission={PERMISSIONS.connectionsWrite}>
-                      <button className="icon-btn" title="Delete" onClick={() => handleDelete(c)}>
+                      <IconButton label="Delete" onClick={() => handleDelete(c)}>
                         <IconTrash width={14} height={14} />
-                      </button>
+                      </IconButton>
                     </PermissionGate>
                   </div>
                 </td>

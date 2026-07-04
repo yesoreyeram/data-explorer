@@ -28,8 +28,10 @@ in from day one.
 - **Paginate** REST APIs (offset/limit, page number, cursor, Link header) and
   GraphQL APIs (Relay cursor connections) automatically, with hard caps so a
   misconfigured "next page" can't loop forever.
-- **Explore** results in a dense, keyboard-friendly UI with a light/dark/system
-  theme switcher.
+- **Explore** results in a compact, near-monochrome UI built on a small
+  first-party component library and design-token system (`src/components/ui`,
+  `src/index.css`), with a collapsible sidebar and a light/dark/system theme
+  switcher.
 - **Govern** access with role-based permissions and a full audit trail of who
   did what, from where, and whether it succeeded — backed by guardrails at
   every layer (row limits, response size caps, rate limits, execution

@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 
 import { extractErrorMessage } from "../api/client";
 import { useAuthStore } from "../state/authStore";
+import { Button, Card, CardBody, Field, Input } from "../components/ui";
 
 export function LoginPage() {
   const login = useAuthStore((s) => s.login);
@@ -31,48 +32,44 @@ export function LoginPage() {
 
   return (
     <div className="auth-shell">
-      <div className="card auth-card">
-        <div className="card-body">
+      <Card className="auth-card">
+        <CardBody>
           <h1 className="panel-title">Sign in</h1>
           <p className="panel-subtitle">Data Explorer &mdash; connect, transform, explore.</p>
 
           {error && <div className="error-banner">{error}</div>}
 
           <form onSubmit={handleSubmit}>
-            <div className="field">
-              <label htmlFor="email">Email</label>
-              <input
+            <Field htmlFor="email" label="Email">
+              <Input
                 id="email"
-                className="input"
                 type="email"
                 autoComplete="email"
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
               />
-            </div>
-            <div className="field">
-              <label htmlFor="password">Password</label>
-              <input
+            </Field>
+            <Field htmlFor="password" label="Password">
+              <Input
                 id="password"
-                className="input"
                 type="password"
                 autoComplete="current-password"
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />
-            </div>
-            <button className="btn btn-primary" type="submit" disabled={submitting} style={{ width: "100%" }}>
+            </Field>
+            <Button variant="primary" type="submit" disabled={submitting} style={{ width: "100%" }}>
               {submitting ? "Signing in..." : "Sign in"}
-            </button>
+            </Button>
           </form>
 
           <p className="field-hint" style={{ marginTop: 12, textAlign: "center" }}>
             No account? <Link to="/register">Create one</Link>
           </p>
-        </div>
-      </div>
+        </CardBody>
+      </Card>
     </div>
   );
 }

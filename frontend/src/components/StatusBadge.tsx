@@ -1,4 +1,6 @@
-const TONE_BY_STATUS: Record<string, "success" | "warning" | "danger" | "neutral"> = {
+import { Badge, type BadgeTone } from "./ui";
+
+const TONE_BY_STATUS: Record<string, BadgeTone> = {
   healthy: "success",
   succeeded: "success",
   active: "success",
@@ -12,6 +14,5 @@ const TONE_BY_STATUS: Record<string, "success" | "warning" | "danger" | "neutral
 };
 
 export function StatusBadge({ status }: { status: string }) {
-  const tone = TONE_BY_STATUS[status] ?? "neutral";
-  return <span className={`badge badge-${tone}`}>{status}</span>;
+  return <Badge tone={TONE_BY_STATUS[status] ?? "neutral"}>{status}</Badge>;
 }

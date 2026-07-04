@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { listAuditLogs, type AuditLogFilter } from "../api/audit";
 import { extractErrorMessage } from "../api/client";
+import { Badge, Button, Input } from "../components/ui";
 
 const PAGE_SIZE = 50;
 
@@ -31,22 +32,19 @@ export function AuditLogPage() {
       </div>
 
       <div className="toolbar" style={{ marginBottom: 12 }}>
-        <input
-          className="input"
+        <Input
           style={{ width: 160 }}
           placeholder="Action (e.g. connection.create)"
           value={filter.action ?? ""}
           onChange={(e) => updateFilter({ action: e.target.value || undefined })}
         />
-        <input
-          className="input"
+        <Input
           style={{ width: 160 }}
           placeholder="Resource type"
           value={filter.resourceType ?? ""}
           onChange={(e) => updateFilter({ resourceType: e.target.value || undefined })}
         />
-        <input
-          className="input"
+        <Input
           style={{ width: 200 }}
           placeholder="Actor ID"
           value={filter.actorId ?? ""}
@@ -91,7 +89,7 @@ export function AuditLogPage() {
                   {log.resourceId && <span style={{ color: "var(--text-tertiary)" }}> · {log.resourceId.slice(0, 8)}</span>}
                 </td>
                 <td>
-                  <span className={`badge ${log.outcome === "success" ? "badge-success" : "badge-danger"}`}>{log.outcome}</span>
+                  <Badge tone={log.outcome === "success" ? "success" : "danger"}>{log.outcome}</Badge>
                 </td>
                 <td className="mono">{log.ipAddress}</td>
               </tr>
@@ -105,22 +103,20 @@ export function AuditLogPage() {
           {total > 0 ? `Showing ${(filter.offset ?? 0) + 1}-${Math.min((filter.offset ?? 0) + PAGE_SIZE, total)} of ${total}` : ""}
         </span>
         <div className="toolbar">
-          <button
-            className="btn btn-sm"
-            type="button"
+          <Button
+            size="sm"
             disabled={(filter.offset ?? 0) === 0}
             onClick={() => setFilter((f) => ({ ...f, offset: Math.max(0, (f.offset ?? 0) - PAGE_SIZE) }))}
           >
             Previous
-          </button>
-          <button
-            className="btn btn-sm"
-            type="button"
+          </Button>
+          <Button
+            size="sm"
             disabled={(filter.offset ?? 0) + PAGE_SIZE >= total}
             onClick={() => setFilter((f) => ({ ...f, offset: (f.offset ?? 0) + PAGE_SIZE }))}
           >
             Next
-          </button>
+          </Button>
         </div>
       </div>
     </div>

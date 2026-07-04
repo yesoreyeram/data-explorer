@@ -12,15 +12,18 @@ export interface FlowNodeData {
   rowsOut?: number;
 }
 
-const META: Record<NodeType, { icon: typeof IconDatabase; color: string; hasInput: boolean; hasOutput: boolean }> = {
-  source: { icon: IconDatabase, color: "hsl(217 91% 60%)", hasInput: false, hasOutput: true },
-  transform: { icon: IconWand, color: "hsl(268 80% 62%)", hasInput: true, hasOutput: true },
-  filter: { icon: IconFilter, color: "hsl(38 92% 50%)", hasInput: true, hasOutput: true },
-  join: { icon: IconGitMerge, color: "hsl(2 74% 58%)", hasInput: true, hasOutput: true },
-  aggregate: { icon: IconLayers, color: "hsl(152 60% 40%)", hasInput: true, hasOutput: true },
-  output: { icon: IconOutput, color: "hsl(222 15% 45%)", hasInput: true, hasOutput: false },
+const META: Record<NodeType, { icon: typeof IconDatabase; hasInput: boolean; hasOutput: boolean }> = {
+  source: { icon: IconDatabase, hasInput: false, hasOutput: true },
+  transform: { icon: IconWand, hasInput: true, hasOutput: true },
+  filter: { icon: IconFilter, hasInput: true, hasOutput: true },
+  join: { icon: IconGitMerge, hasInput: true, hasOutput: true },
+  aggregate: { icon: IconLayers, hasInput: true, hasOutput: true },
+  output: { icon: IconOutput, hasInput: true, hasOutput: false },
 };
 
+// Node types are told apart by icon + label, not color - see the palette's
+// minimal-color design in styles/app.css. Handles/borders use the theme's
+// monochrome accent; only the error state keeps a (semantic) red.
 export const FlowNode = memo(function FlowNode({ data, selected }: NodeProps<FlowNodeData>) {
   const meta = META[data.nodeType];
   const Icon = meta.icon;
@@ -28,18 +31,21 @@ export const FlowNode = memo(function FlowNode({ data, selected }: NodeProps<Flo
   return (
     <div
       className="flow-node"
-      style={{ borderColor: selected ? meta.color : undefined, boxShadow: data.error ? "0 0 0 2px var(--danger)" : undefined }}
+      style={{
+        borderColor: selected ? "var(--accent)" : undefined,
+        boxShadow: data.error ? "0 0 0 2px var(--danger)" : undefined,
+      }}
     >
       {data.nodeType === "join" ? (
         <>
-          <Handle type="target" position={Position.Left} id="left" style={{ top: "35%", background: meta.color }} />
-          <Handle type="target" position={Position.Left} id="right" style={{ top: "65%", background: meta.color }} />
+          <Handle type="target" position={Position.Left} id="left" style={{ top: "35%", background: "var(--border-strong)" }} />
+          <Handle type="target" position={Position.Left} id="right" style={{ top: "65%", background: "var(--border-strong)" }} />
         </>
       ) : (
-        meta.hasInput && <Handle type="target" position={Position.Left} style={{ background: meta.color }} />
+        meta.hasInput && <Handle type="target" position={Position.Left} style={{ background: "var(--border-strong)" }} />
       )}
 
-      <div className="flow-node-icon" style={{ background: meta.color }}>
+      <div className="flow-node-icon">
         <Icon width={13} height={13} />
       </div>
       <div className="flow-node-body">
@@ -50,7 +56,7 @@ export const FlowNode = memo(function FlowNode({ data, selected }: NodeProps<Flo
         {data.error && <div className="flow-node-error">{data.error}</div>}
       </div>
 
-      {meta.hasOutput && <Handle type="source" position={Position.Right} style={{ background: meta.color }} />}
+      {meta.hasOutput && <Handle type="source" position={Position.Right} style={{ background: "var(--border-strong)" }} />}
     </div>
   );
 });

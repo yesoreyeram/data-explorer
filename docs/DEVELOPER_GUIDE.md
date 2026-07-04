@@ -115,6 +115,32 @@ are required.
   database) over integration tests that need a live Postgres, where
   possible.
 
+## Frontend design system conventions
+
+See [`ARCHITECTURE.md`](ARCHITECTURE.md#frontend) for the full picture. In
+new UI code:
+
+- **Use `src/components/ui/`** (`Button`, `IconButton`, `Field`, `Input`,
+  `Select`, `Textarea`, `Badge`, `Card`/`CardHeader`/`CardBody`, `StatTile`)
+  instead of raw `className="btn"`/`"input"`/`"field"` strings. They render
+  the exact same markup/classes, so this is purely about not hand-rolling
+  the same boilerplate (label/hint wiring, `type="button"` defaults,
+  disabled states) at every call site.
+- **Don't introduce a new color.** The palette (`src/index.css`) is
+  intentionally near-monochrome - every structural color is grayscale, and
+  `--success`/`--warning`/`--danger` are the only hues, reserved for
+  `Badge`'s status dot. A new feature needing to convey state should reach
+  for one of those three tones, not a new hex/hsl value.
+- **Spacing/sizing comes from the token scale** (`--space-1` through
+  `--space-6`, `--radius-sm/md/lg`) - avoid one-off pixel values in new
+  component CSS.
+- Not everything has been migrated to `ui/` primitives - form-heavy modals
+  with many repeated fields (`ConnectionFormModal`'s cloud/auth sub-forms,
+  `PaginationFields`, `NodeConfigPanel`) still use the raw classes directly.
+  That's fine: the classes *are* the design system, the `ui/` components are
+  just a typed convenience over them, so there's no visual or behavioral gap
+  between the two.
+
 ## Adding a new connection type (connector)
 
 Connectors implement one interface (`internal/connections/connector.go`),

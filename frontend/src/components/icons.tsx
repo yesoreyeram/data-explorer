@@ -109,6 +109,14 @@ export const IconPlug = (p: IconProps) =>
     p,
   );
 export const IconActivity = (p: IconProps) => base(<path d="M1.5 8h3l2-5 3 10 2-5h3" />, p);
+export const IconPanelLeft = (p: IconProps) =>
+  base(
+    <>
+      <rect x="2" y="3" width="12" height="10" rx="1.5" />
+      <path d="M6.5 3v10" />
+    </>,
+    p,
+  );
 export const IconSettings = (p: IconProps) =>
   base(
     <>

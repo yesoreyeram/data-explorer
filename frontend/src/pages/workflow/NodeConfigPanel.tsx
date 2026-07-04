@@ -5,6 +5,7 @@ import type { CloudQuerySpec, GraphQLSpec, PaginationSpec, WorkflowNode } from "
 import { IconTrash, IconX } from "../../components/icons";
 import { PaginationFields } from "../../components/PaginationFields";
 import { CloudQueryFields } from "../../components/CloudQueryFields";
+import { Button, IconButton } from "../../components/ui";
 
 interface NodeConfigPanelProps {
   node: WorkflowNode;
@@ -29,12 +30,12 @@ export function NodeConfigPanel({ node, onChange, onClose, onDelete }: NodeConfi
       <div className="card-header">
         <h3>Configure node</h3>
         <div style={{ display: "flex", gap: 4 }}>
-          <button className="icon-btn" title="Delete node" onClick={() => onDelete(node.id)}>
+          <IconButton label="Delete node" onClick={() => onDelete(node.id)}>
             <IconTrash width={14} height={14} />
-          </button>
-          <button className="icon-btn" title="Close" onClick={onClose}>
+          </IconButton>
+          <IconButton label="Close" onClick={onClose}>
             <IconX width={14} height={14} />
-          </button>
+          </IconButton>
         </div>
       </div>
       <div className="card-body" style={{ flex: 1 }}>
@@ -331,18 +332,14 @@ function AggregateForm({ node, onChange }: { node: WorkflowNode; onChange: NodeC
             value={agg.as}
             onChange={(e) => setAggregations(aggregations.map((a, idx) => (idx === i ? { ...a, as: e.target.value } : a)))}
           />
-          <button className="icon-btn" type="button" onClick={() => setAggregations(aggregations.filter((_, idx) => idx !== i))}>
+          <IconButton label="Remove aggregation" onClick={() => setAggregations(aggregations.filter((_, idx) => idx !== i))}>
             <IconTrash width={13} height={13} />
-          </button>
+          </IconButton>
         </div>
       ))}
-      <button
-        className="btn btn-sm"
-        type="button"
-        onClick={() => setAggregations([...aggregations, { field: "", op: "sum", as: "" }])}
-      >
+      <Button size="sm" onClick={() => setAggregations([...aggregations, { field: "", op: "sum", as: "" }])}>
         Add aggregation
-      </button>
+      </Button>
     </>
   );
 }

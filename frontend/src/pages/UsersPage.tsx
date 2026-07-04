@@ -8,6 +8,7 @@ import { StatusBadge } from "../components/StatusBadge";
 import { PermissionGate } from "../components/PermissionGate";
 import { PERMISSIONS } from "../lib/permissions";
 import { Modal } from "../components/Modal";
+import { Badge, Button } from "../components/ui";
 import type { User } from "../api/types";
 
 export function UsersPage() {
@@ -62,8 +63,8 @@ export function UsersPage() {
                 <td>{u.email}</td>
                 <td>
                   {(u.roles ?? []).map((r) => (
-                    <span key={r.id || r.name} className="badge badge-neutral" style={{ marginRight: 4 }}>
-                      {r.name}
+                    <span key={r.id || r.name} style={{ marginRight: 4, display: "inline-block" }}>
+                      <Badge>{r.name}</Badge>
                     </span>
                   ))}
                 </td>
@@ -74,20 +75,19 @@ export function UsersPage() {
                 <td>
                   <PermissionGate permission={PERMISSIONS.rolesWrite}>
                     <div style={{ display: "flex", gap: 6 }}>
-                      <button className="btn btn-sm" type="button" onClick={() => setRoleEditTarget(u)}>
+                      <Button size="sm" onClick={() => setRoleEditTarget(u)}>
                         Roles
-                      </button>
+                      </Button>
                       <PermissionGate permission={PERMISSIONS.usersWrite}>
-                        <button
-                          className="btn btn-sm"
-                          type="button"
+                        <Button
+                          size="sm"
                           disabled={u.id === currentUser?.id}
                           onClick={() =>
                             statusMutation.mutate({ id: u.id, status: u.status === "active" ? "suspended" : "active" })
                           }
                         >
                           {u.status === "active" ? "Suspend" : "Reactivate"}
-                        </button>
+                        </Button>
                       </PermissionGate>
                     </div>
                   </PermissionGate>
@@ -143,12 +143,9 @@ function RoleEditorModal({
       onClose={onClose}
       footer={
         <>
-          <button className="btn" type="button" onClick={onClose}>
-            Cancel
-          </button>
-          <button
-            className="btn btn-primary"
-            type="button"
+          <Button onClick={onClose}>Cancel</Button>
+          <Button
+            variant="primary"
             disabled={saving}
             onClick={async () => {
               setSaving(true);
@@ -157,7 +154,7 @@ function RoleEditorModal({
             }}
           >
             {saving ? "Saving…" : "Save"}
-          </button>
+          </Button>
         </>
       }
     >

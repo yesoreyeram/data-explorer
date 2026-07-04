@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 import { IconX } from "./icons";
+import { IconButton } from "./ui";
 
 interface ModalProps {
   title: string;
@@ -24,9 +25,9 @@ export function Modal({ title, onClose, children, footer, width = 480 }: ModalPr
       >
         <div className="card-header">
           <h3>{title}</h3>
-          <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">
+          <IconButton label="Close" onClick={onClose}>
             <IconX width={14} height={14} />
-          </button>
+          </IconButton>
         </div>
         <div className="card-body modal-body">{children}</div>
         {footer && <div className="modal-footer">{footer}</div>}

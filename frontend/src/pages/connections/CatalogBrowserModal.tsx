@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Modal } from "../../components/Modal";
 import { listCatalog } from "../../api/catalog";
 import type { CatalogEntry } from "../../api/types";
+import { Badge, Input, Select } from "../../components/ui";
 
 interface CatalogBrowserModalProps {
   onClose: () => void;
@@ -42,26 +43,20 @@ export function CatalogBrowserModal({ onClose, onSelect }: CatalogBrowserModalPr
         your own credentials.
       </p>
       <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 8, marginBottom: 12 }}>
-        <input
-          className="input"
-          placeholder="Search integrations..."
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          autoFocus
-        />
-        <select className="select" value={type} onChange={(e) => setType(e.target.value as "" | "rest" | "graphql")}>
+        <Input placeholder="Search integrations..." value={q} onChange={(e) => setQ(e.target.value)} autoFocus />
+        <Select value={type} onChange={(e) => setType(e.target.value as "" | "rest" | "graphql")}>
           <option value="">All types</option>
           <option value="rest">REST</option>
           <option value="graphql">GraphQL</option>
-        </select>
-        <select className="select" value={category} onChange={(e) => setCategory(e.target.value)}>
+        </Select>
+        <Select value={category} onChange={(e) => setCategory(e.target.value)}>
           <option value="">All categories</option>
           {categories.map((c) => (
             <option key={c} value={c}>
               {c}
             </option>
           ))}
-        </select>
+        </Select>
       </div>
 
       {isLoading && <p className="field-hint">Loading catalog...</p>}
@@ -92,8 +87,8 @@ export function CatalogBrowserModal({ onClose, onSelect }: CatalogBrowserModalPr
               </p>
             </div>
             <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-              <span className="badge badge-neutral">{e.category}</span>
-              <span className="badge badge-neutral">{e.type}</span>
+              <Badge>{e.category}</Badge>
+              <Badge>{e.type}</Badge>
             </div>
           </button>
         ))}

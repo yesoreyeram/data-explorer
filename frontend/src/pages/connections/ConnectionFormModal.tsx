@@ -4,6 +4,7 @@ import { Modal } from "../../components/Modal";
 import type { AuthType, CatalogEntry, Connection, ConnectionType } from "../../api/types";
 import { AUTH_TYPE_OPTIONS, AuthTypeFields } from "./AuthTypeFields";
 import { CloudConnectionFields } from "./CloudConnectionFields";
+import { Button } from "../../components/ui";
 
 interface ConnectionFormModalProps {
   connection?: Connection;
@@ -136,12 +137,10 @@ export function ConnectionFormModal({ connection, catalogEntry, onClose, onSubmi
       width={560}
       footer={
         <>
-          <button className="btn" type="button" onClick={onClose}>
-            Cancel
-          </button>
-          <button className="btn btn-primary" type="submit" form="connection-form" disabled={submitting}>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button variant="primary" type="submit" form="connection-form" disabled={submitting}>
             {submitting ? "Saving..." : "Save connection"}
-          </button>
+          </Button>
         </>
       }
     >
