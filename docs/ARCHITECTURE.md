@@ -226,6 +226,45 @@ implementing the small `Connector` interface
 `*dataframe.Frame`) and registering it in `cmd/server/main.go` - see the
 developer guide for a walkthrough.
 
+## Health checks and error classification
+
+A connection's `Test` call doesn't just record "did it work" - a failure
+gets run through `internal/connections.Classify` (`healtherror.go`) first,
+which turns whatever a Postgres/MySQL driver, an HTTP client, or a cloud
+SDK produced into a `HealthError`: a stable `Code` (`timeout`,
+`network_unreachable`, `auth_failed`, `permission_denied`, `not_found`,
+`rate_limited`, `invalid_config`, `unknown`), a plain-language `Message`
+written for whoever's looking at a red connection in the UI, and a concrete
+`Remediation` - the next thing to actually try, not just what went wrong.
+The original error is preserved underneath (`Unwrap`/`Detail`) so logs and
+`errors.Is`/`errors.As` upstream keep working unchanged.
+
+Classification is applied in exactly one place - `Service.Test`/`Query`/
+`QueryAdhoc`, the three choke points every connector's error already flows
+through - rather than in each of the seven connector implementations.
+`Classify` unwraps typed errors from every driver/SDK already in `go.mod`
+(`*pgconn.PgError`'s SQLSTATE, `*mysql.MySQLError`'s error number,
+`smithy.APIError` for AWS, `*azcore.ResponseError`'s status code,
+`*googleapi.Error`'s status code, `net.Error` for generic timeouts/DNS/
+connection-refused) before falling back to substring matching on the
+handful of message shapes that recur across everything else.
+
+`Service.Test` also times the connector call and persists the result -
+`status`, `last_tested_at`, `last_error`, plus the structured
+`last_error_code`/`last_error_remediation`/`last_check_duration_ms`
+(`db/migrations/0004_connection_health.sql`) - via a `TestResult` struct on
+`Repository.SetTestResult`. The API surfaces the same structure two ways:
+`POST /connections/{id}/test` returns `errorCode`/`errorRemediation` fields
+inline, and `platform/httpx.WriteErrorDetailed` adds optional
+`remediation`/`detail` fields to the standard `{error: {code, message}}`
+envelope for query failures (`GET .../query`, explore). The frontend's
+connection health panel (`ConnectionHealthModal.tsx`) renders the code as a
+badge, the message as the headline, and the remediation as a "next step" -
+plus a "recent checks" history pulled from the audit log (every `Test` call
+already records a `connection.test` entry; `audit.ListFilter.ResourceID`
+lets the panel scope that history to one connection instead of adding a
+second, redundant history table).
+
 ## Cloud provider connectors
 
 `aws`, `gcp`, and `azure` are one connector each, but each wraps several
@@ -247,17 +286,26 @@ carried on `QuerySpec.Cloud` (`internal/connections/connector.go`'s
 Two implementation choices are shared across all three clouds specifically
 because the same tension shows up in each SDK:
 
-- **Ambient credentials by default.** Each connector's config accepts
-  optional static credentials in the encrypted secret (AWS access
-  key/secret/session token, a GCP service account key JSON blob, an Azure
-  service-principal tenant/client/secret), but if none are supplied it falls
-  back to the SDK's own default credential chain - `aws-sdk-go-v2`'s
-  `config.LoadDefaultConfig` (IAM role), GCP's Application Default
-  Credentials, `azidentity.NewDefaultAzureCredential`. This mirrors
+- **Ambient credentials by default, with a scoped alternative on top.** Each
+  connector's config accepts optional static credentials in the encrypted
+  secret (AWS access key/secret/session token, a GCP service account key
+  JSON blob, an Azure service-principal tenant/client/secret), but if none
+  are supplied it falls back to the SDK's own default credential chain -
+  `aws-sdk-go-v2`'s `config.LoadDefaultConfig` (IAM role), GCP's Application
+  Default Credentials, `azidentity.NewDefaultAzureCredential`. This mirrors
   `pkg/httpclient`'s `workloadIdentity` auth scheme's philosophy at the
   cloud-SDK layer: prefer short-lived, non-stored credentials over a
   long-lived key sitting in the database, without forcing every deployment
-  to configure one.
+  to configure one. On top of that base identity, each cloud also supports
+  the standard way to scope access down further without minting a new
+  long-lived key per target: AWS `AWSConfig.RoleArn` (+ optional
+  `RoleExternalID`/`RoleSessionName`) assumes a role via STS
+  (`stscreds.NewAssumeRoleProvider`, wrapped in `aws.NewCredentialsCache` so
+  it auto-refreshes); GCP `GCPConfig.ImpersonateServiceAccount` impersonates
+  a narrower service account via the IAM Credentials API
+  (`google.golang.org/api/impersonate`); Azure accepts a `clientCertificate`
+  (PEM or PKCS12, via `azidentity.NewClientCertificateCredential`) as an
+  alternative to `clientSecret` for the same service principal.
 - **Async query polling, hidden behind one call.** Athena and CloudWatch
   Logs Insights don't have a synchronous "run and wait" API - both are
   start-then-poll (`StartQueryExecution`/`GetQueryExecution` and

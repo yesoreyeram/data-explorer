@@ -15,6 +15,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
 
 	"github.com/yesoreyeram/data-explorer/backend/internal/connections"
 	"github.com/yesoreyeram/data-explorer/backend/pkg/dataframe"
@@ -38,6 +40,15 @@ type AWSConfig struct {
 	AthenaDatabase       string `json:"athenaDatabase,omitempty"`
 	AthenaWorkgroup      string `json:"athenaWorkgroup,omitempty"`
 	AthenaOutputLocation string `json:"athenaOutputLocation,omitempty"` // s3://bucket/prefix
+
+	// AssumeRole: when RoleArn is set, the connector uses AWS STS to assume
+	// this role on top of the base credentials (static keys from the secret,
+	// or the default chain) - the standard way to grant a connection scoped,
+	// temporary access (e.g. into another AWS account) without minting a new
+	// long-lived key for every account/role it needs to reach.
+	RoleArn         string `json:"roleArn,omitempty"`
+	RoleExternalID  string `json:"roleExternalId,omitempty"`
+	RoleSessionName string `json:"roleSessionName,omitempty"`
 }
 
 type AWS struct{}
@@ -62,7 +73,9 @@ func (a *AWS) parseConfig(cfgJSON json.RawMessage) (AWSConfig, error) {
 
 // awsConfig builds an aws.Config for the given connection: static
 // credentials if the secret supplies them, otherwise the SDK's own default
-// credential chain.
+// credential chain. If RoleArn is set, that base identity is then used to
+// assume the target role via STS, and the resulting temporary credentials
+// (auto-refreshed on expiry) are what the connector actually uses.
 func awsConfig(ctx context.Context, cfg AWSConfig, secret map[string]string) (aws.Config, error) {
 	opts := []func(*awsconfig.LoadOptions) error{awsconfig.WithRegion(cfg.Region)}
 
@@ -76,6 +89,20 @@ func awsConfig(ctx context.Context, cfg AWSConfig, secret map[string]string) (aw
 	if err != nil {
 		return aws.Config{}, fmt.Errorf("load aws credentials: %w", err)
 	}
+
+	if cfg.RoleArn != "" {
+		stsClient := sts.NewFromConfig(awsCfg)
+		provider := stscreds.NewAssumeRoleProvider(stsClient, cfg.RoleArn, func(o *stscreds.AssumeRoleOptions) {
+			if cfg.RoleExternalID != "" {
+				o.ExternalID = aws.String(cfg.RoleExternalID)
+			}
+			if cfg.RoleSessionName != "" {
+				o.RoleSessionName = cfg.RoleSessionName
+			}
+		})
+		awsCfg.Credentials = aws.NewCredentialsCache(provider)
+	}
+
 	return awsCfg, nil
 }
 

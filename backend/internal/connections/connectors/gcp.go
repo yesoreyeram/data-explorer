@@ -9,11 +9,17 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"google.golang.org/api/impersonate"
 	"google.golang.org/api/option"
 
 	"github.com/yesoreyeram/data-explorer/backend/internal/connections"
 	"github.com/yesoreyeram/data-explorer/backend/pkg/dataframe"
 )
+
+// cloudPlatformScope is the broad scope requested for an impersonated token;
+// the actual permissions granted are still bounded by whatever IAM roles the
+// impersonated service account itself holds.
+const cloudPlatformScope = "https://www.googleapis.com/auth/cloud-platform"
 
 // GCPConfig is the non-secret configuration for a "gcp" connection.
 // Credentials (secret key "serviceAccountKeyJson") are optional: when
@@ -26,6 +32,15 @@ type GCPConfig struct {
 	// Service selects which GCP service this connection queries:
 	// "bigquery" | "gcs".
 	Service string `json:"service"`
+
+	// ImpersonateServiceAccount: when set, the connector impersonates this
+	// service account (via the IAM Credentials API, short-lived tokens) on
+	// top of the base credentials - lets one base identity (ADC, or a stored
+	// key) be scoped down to exactly the permissions of a narrower service
+	// account per connection, without minting a new key for each one. The
+	// base identity needs roles/iam.serviceAccountTokenCreator on this
+	// service account.
+	ImpersonateServiceAccount string `json:"impersonateServiceAccount,omitempty"`
 }
 
 type GCP struct{}
@@ -49,12 +64,26 @@ func (g *GCP) parseConfig(cfgJSON json.RawMessage) (GCPConfig, error) {
 }
 
 // gcpClientOptions returns the option.ClientOption needed to authenticate,
-// given an optional service account key from the connection's secret.
-func gcpClientOptions(secret map[string]string) []option.ClientOption {
+// given an optional service account key from the connection's secret and an
+// optional service account to impersonate on top of that base identity.
+func gcpClientOptions(ctx context.Context, cfg GCPConfig, secret map[string]string) ([]option.ClientOption, error) {
+	var base []option.ClientOption
 	if key := secret["serviceAccountKeyJson"]; key != "" {
-		return []option.ClientOption{option.WithCredentialsJSON([]byte(key))}
+		base = append(base, option.WithCredentialsJSON([]byte(key)))
 	}
-	return nil
+
+	if cfg.ImpersonateServiceAccount == "" {
+		return base, nil
+	}
+
+	ts, err := impersonate.CredentialsTokenSource(ctx, impersonate.CredentialsConfig{
+		TargetPrincipal: cfg.ImpersonateServiceAccount,
+		Scopes:          []string{cloudPlatformScope},
+	}, base...)
+	if err != nil {
+		return nil, fmt.Errorf("configure gcp service account impersonation: %w", err)
+	}
+	return []option.ClientOption{option.WithTokenSource(ts)}, nil
 }
 
 func (g *GCP) Test(ctx context.Context, cfgJSON json.RawMessage, secret map[string]string) error {
@@ -62,7 +91,10 @@ func (g *GCP) Test(ctx context.Context, cfgJSON json.RawMessage, secret map[stri
 	if err != nil {
 		return err
 	}
-	opts := gcpClientOptions(secret)
+	opts, err := gcpClientOptions(ctx, cfg, secret)
+	if err != nil {
+		return err
+	}
 
 	switch cfg.Service {
 	case "bigquery":
@@ -82,7 +114,10 @@ func (g *GCP) Execute(ctx context.Context, cfgJSON json.RawMessage, secret map[s
 	if spec.Cloud == nil {
 		return nil, fmt.Errorf("this connection requires a cloud query spec")
 	}
-	opts := gcpClientOptions(secret)
+	opts, err := gcpClientOptions(ctx, cfg, secret)
+	if err != nil {
+		return nil, err
+	}
 
 	switch cfg.Service {
 	case "bigquery":

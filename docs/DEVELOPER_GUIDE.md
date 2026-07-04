@@ -188,6 +188,40 @@ Steps, using the existing connectors as templates
    `buildQuerySpec()`/`summarizeQuery()` in `lib/querySpec.ts` - shared the
    same way across the query modal and the Explore page.
 
+### Extending the health-error classification
+
+A connector should just return whatever error its driver/SDK/HTTP client
+gave it (wrapped with `fmt.Errorf("%w", ...)` for context, if useful) -
+`connections.Classify` is the single place that turns that into a
+`HealthError` (stable `Code`, user-facing `Message`, actionable
+`Remediation`), applied centrally in `Service.Test`/`Query`/`QueryAdhoc`.
+Connectors don't need to call `Classify` themselves.
+
+To improve classification for a case that's currently falling through to
+`ErrCodeUnknown`:
+
+1. If the underlying library exposes a typed error (like `*pgconn.PgError`
+   or `smithy.APIError`), add/extend a `classify<Thing>` helper in
+   `internal/connections/healtherror.go` and an `errors.As` branch in
+   `Classify` - see `classifyPostgres`/`classifyAWS` for the pattern of
+   mapping a driver-specific code to one of the existing `ErrorCode` values.
+2. If it's an untyped error from a library that only returns strings, add a
+   `containsAny(msg, ...)` case to `classifyByMessage` instead - keep it as
+   the last resort, since a typed check is always more reliable than
+   substring matching.
+3. If a connector wants to reject bad config before ever dialing out (e.g. a
+   missing required field), return `connections.NewConfigError("...")`
+   rather than a plain `fmt.Errorf` - it's already a `HealthError` with
+   `ErrCodeInvalidConfig`, so `Classify` passes it through unchanged.
+4. Add a case to `healtherror_test.go`'s table-driven tests for the new code
+   path (see `TestClassifyPostgres`/`TestClassifyByMessageFallback` for the
+   shape) - one line per input/expected-`ErrorCode` pair.
+
+Don't invent a new `ErrorCode` value casually - the existing eight are meant
+to cover "what should the user actually go check" (credentials vs.
+permissions vs. network vs. rate limit vs. ...), not to mirror every
+provider's error taxonomy 1:1.
+
 ### Adding a new HTTP auth scheme
 
 If you're adding a scheme `pkg/httpclient` doesn't already cover (Basic,
@@ -226,7 +260,9 @@ alongside Athena):
    existing ones (e.g. `aws_athena.go`). Reuse the cloud's shared credential
    helper (`awsConfig`/`gcpClientOptions`/`azureCredential`) rather than
    building a client from scratch - that's what keeps the ambient-credential
-   fallback working for every service under that cloud.
+   fallback *and* the alternative auth methods (AWS AssumeRole, GCP service
+   account impersonation, Azure client certificate) working for every
+   service under that cloud, without each service file re-implementing them.
 3. If the service's underlying API is async (start-then-poll, like Athena and
    CloudWatch Logs Insights), poll with `AsyncQueryPollInterval`/
    `AsyncQueryMaxWait` from `cloudguardrails.go` rather than a bespoke loop.

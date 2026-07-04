@@ -72,9 +72,19 @@ type Connection struct {
 	Status       ConnectionStatus `json:"status"`
 	LastTestedAt *time.Time       `json:"lastTestedAt,omitempty"`
 	LastError    string           `json:"lastError,omitempty"`
-	CreatedBy    string           `json:"createdBy"`
-	CreatedAt    time.Time        `json:"createdAt"`
-	UpdatedAt    time.Time        `json:"updatedAt"`
+
+	// LastErrorCode/LastErrorRemediation are the structured counterpart to
+	// LastError (see connections.HealthError/Classify) - a stable code the
+	// UI can key a badge off of, and a concrete next step, instead of just
+	// a driver's raw message. Empty when the last check succeeded (or none
+	// has run yet).
+	LastErrorCode        string `json:"lastErrorCode,omitempty"`
+	LastErrorRemediation string `json:"lastErrorRemediation,omitempty"`
+	LastCheckDurationMs  int64  `json:"lastCheckDurationMs,omitempty"`
+
+	CreatedBy string    `json:"createdBy"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 // ConnectionSecret is the sensitive payload for a connection. It is encrypted

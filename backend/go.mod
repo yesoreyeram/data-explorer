@@ -17,6 +17,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.78.2
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.59.2
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.104.2
+	github.com/aws/aws-sdk-go-v2/service/sts v1.43.5
+	github.com/aws/smithy-go v1.27.3
 	github.com/blues/jsonata-go v1.5.4
 	github.com/go-chi/chi/v5 v5.3.0
 	github.com/go-chi/cors v1.2.2
@@ -62,8 +64,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/signin v1.2.2 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.31.5 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.36.8 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sts v1.43.5 // indirect
-	github.com/aws/smithy-go v1.27.3 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cncf/xds/go v0.0.0-20260202195803-dba9d589def2 // indirect

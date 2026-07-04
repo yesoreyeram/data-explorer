@@ -17,13 +17,15 @@ import (
 )
 
 // AzureConfig is the non-secret configuration for an "azure" connection.
-// Credentials are optional: with TenantID/ClientID set and a "clientSecret"
-// in the connection's secret, the connector authenticates as that service
-// principal; otherwise it falls back to DefaultAzureCredential, which tries
-// (in order) environment variables, workload identity, managed identity,
-// and the Azure CLI's logged-in session - so a server running inside Azure
-// (e.g. AKS with workload identity, or a VM with a managed identity) never
-// needs a long-lived secret stored here at all.
+// Credentials are optional: with TenantID/ClientID set and either a
+// "clientSecret" or a "clientCertificate" (PEM or PKCS12, optionally paired
+// with "clientCertificatePassword") in the connection's secret, the
+// connector authenticates as that service principal; otherwise it falls
+// back to DefaultAzureCredential, which tries (in order) environment
+// variables, workload identity, managed identity, and the Azure CLI's
+// logged-in session - so a server running inside Azure (e.g. AKS with
+// workload identity, or a VM with a managed identity) never needs a
+// long-lived secret stored here at all.
 type AzureConfig struct {
 	// Service selects which Azure service this connection queries:
 	// "logAnalytics" | "blobStorage".
@@ -63,8 +65,17 @@ func (a *Azure) parseConfig(cfgJSON json.RawMessage) (AzureConfig, error) {
 }
 
 func azureCredential(cfg AzureConfig, secret map[string]string) (azcore.TokenCredential, error) {
-	if cfg.TenantID != "" && cfg.ClientID != "" && secret["clientSecret"] != "" {
-		return azidentity.NewClientSecretCredential(cfg.TenantID, cfg.ClientID, secret["clientSecret"], nil)
+	if cfg.TenantID != "" && cfg.ClientID != "" {
+		if certData := secret["clientCertificate"]; certData != "" {
+			certs, key, err := azidentity.ParseCertificates([]byte(certData), []byte(secret["clientCertificatePassword"]))
+			if err != nil {
+				return nil, fmt.Errorf("parse client certificate: %w", err)
+			}
+			return azidentity.NewClientCertificateCredential(cfg.TenantID, cfg.ClientID, certs, key, nil)
+		}
+		if secret["clientSecret"] != "" {
+			return azidentity.NewClientSecretCredential(cfg.TenantID, cfg.ClientID, secret["clientSecret"], nil)
+		}
 	}
 	return azidentity.NewDefaultAzureCredential(nil)
 }

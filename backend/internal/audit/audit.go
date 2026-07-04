@@ -76,6 +76,7 @@ type ListFilter struct {
 	ActorID      string
 	Action       string
 	ResourceType string
+	ResourceID   string
 	Since        *time.Time
 	Until        *time.Time
 	Limit        int
@@ -102,6 +103,9 @@ func (s *Service) List(ctx context.Context, f ListFilter) ([]domain.AuditLog, in
 	}
 	if f.ResourceType != "" {
 		where += " AND resource_type = " + arg(f.ResourceType)
+	}
+	if f.ResourceID != "" {
+		where += " AND resource_id = " + arg(f.ResourceID)
 	}
 	if f.Since != nil {
 		where += " AND created_at >= " + arg(*f.Since)

@@ -1,6 +1,7 @@
 package connectors
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 )
@@ -32,14 +33,21 @@ func TestGCPParseConfigAcceptsEachKnownService(t *testing.T) {
 }
 
 func TestGCPClientOptionsUsesServiceAccountKeyWhenPresent(t *testing.T) {
-	opts := gcpClientOptions(map[string]string{"serviceAccountKeyJson": `{"type":"service_account"}`})
+	opts, err := gcpClientOptions(context.Background(), GCPConfig{}, map[string]string{"serviceAccountKeyJson": `{"type":"service_account"}`})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(opts) != 1 {
 		t.Fatalf("expected 1 client option when a key is present, got %d", len(opts))
 	}
 }
 
 func TestGCPClientOptionsEmptyWithoutKey(t *testing.T) {
-	if opts := gcpClientOptions(map[string]string{}); len(opts) != 0 {
+	opts, err := gcpClientOptions(context.Background(), GCPConfig{}, map[string]string{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(opts) != 0 {
 		t.Fatalf("expected no client options without a key (ADC fallback), got %d", len(opts))
 	}
 }

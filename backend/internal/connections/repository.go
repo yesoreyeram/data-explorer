@@ -24,6 +24,18 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 	return &Repository{db: db}
 }
 
+const connectionColumns = `id, name, type, description, config, status, last_tested_at, last_error,
+	last_error_code, last_error_remediation, last_check_duration_ms, created_by, created_at, updated_at`
+
+func scanConnection(row interface {
+	Scan(dest ...any) error
+}) (domain.Connection, error) {
+	var c domain.Connection
+	err := row.Scan(&c.ID, &c.Name, &c.Type, &c.Description, &c.Config, &c.Status, &c.LastTestedAt, &c.LastError,
+		&c.LastErrorCode, &c.LastErrorRemediation, &c.LastCheckDurationMs, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt)
+	return c, err
+}
+
 type createParams struct {
 	Name            string
 	Type            domain.ConnectionType
@@ -34,13 +46,13 @@ type createParams struct {
 }
 
 func (r *Repository) Create(ctx context.Context, p createParams) (domain.Connection, error) {
-	var c domain.Connection
-	err := r.db.QueryRow(ctx,
+	row := r.db.QueryRow(ctx,
 		`INSERT INTO connections (name, type, description, config, secret_encrypted, created_by)
 		 VALUES ($1, $2, $3, $4, $5, $6)
-		 RETURNING id, name, type, description, config, status, last_tested_at, last_error, created_by, created_at, updated_at`,
+		 RETURNING `+connectionColumns,
 		p.Name, p.Type, p.Description, p.Config, p.SecretEncrypted, p.CreatedBy,
-	).Scan(&c.ID, &c.Name, &c.Type, &c.Description, &c.Config, &c.Status, &c.LastTestedAt, &c.LastError, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt)
+	)
+	c, err := scanConnection(row)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return domain.Connection{}, ErrConflict
@@ -51,9 +63,7 @@ func (r *Repository) Create(ctx context.Context, p createParams) (domain.Connect
 }
 
 func (r *Repository) List(ctx context.Context) ([]domain.Connection, error) {
-	rows, err := r.db.Query(ctx,
-		`SELECT id, name, type, description, config, status, last_tested_at, last_error, created_by, created_at, updated_at
-		 FROM connections ORDER BY name`)
+	rows, err := r.db.Query(ctx, `SELECT `+connectionColumns+` FROM connections ORDER BY name`)
 	if err != nil {
 		return nil, fmt.Errorf("query connections: %w", err)
 	}
@@ -61,8 +71,8 @@ func (r *Repository) List(ctx context.Context) ([]domain.Connection, error) {
 
 	var out []domain.Connection
 	for rows.Next() {
-		var c domain.Connection
-		if err := rows.Scan(&c.ID, &c.Name, &c.Type, &c.Description, &c.Config, &c.Status, &c.LastTestedAt, &c.LastError, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		c, err := scanConnection(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -71,11 +81,8 @@ func (r *Repository) List(ctx context.Context) ([]domain.Connection, error) {
 }
 
 func (r *Repository) Get(ctx context.Context, id string) (domain.Connection, error) {
-	var c domain.Connection
-	err := r.db.QueryRow(ctx,
-		`SELECT id, name, type, description, config, status, last_tested_at, last_error, created_by, created_at, updated_at
-		 FROM connections WHERE id = $1`, id,
-	).Scan(&c.ID, &c.Name, &c.Type, &c.Description, &c.Config, &c.Status, &c.LastTestedAt, &c.LastError, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt)
+	row := r.db.QueryRow(ctx, `SELECT `+connectionColumns+` FROM connections WHERE id = $1`, id)
+	c, err := scanConnection(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.Connection{}, ErrNotFound
@@ -109,23 +116,25 @@ type updateParams struct {
 }
 
 func (r *Repository) Update(ctx context.Context, id string, p updateParams) (domain.Connection, error) {
-	var c domain.Connection
-	var err error
+	var row interface {
+		Scan(dest ...any) error
+	}
 	if p.SecretEncrypted != nil {
-		err = r.db.QueryRow(ctx,
+		row = r.db.QueryRow(ctx,
 			`UPDATE connections SET name = $1, description = $2, config = $3, secret_encrypted = $4,
 			 status = 'unverified', updated_at = now() WHERE id = $5
-			 RETURNING id, name, type, description, config, status, last_tested_at, last_error, created_by, created_at, updated_at`,
+			 RETURNING `+connectionColumns,
 			p.Name, p.Description, p.Config, *p.SecretEncrypted, id,
-		).Scan(&c.ID, &c.Name, &c.Type, &c.Description, &c.Config, &c.Status, &c.LastTestedAt, &c.LastError, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt)
+		)
 	} else {
-		err = r.db.QueryRow(ctx,
+		row = r.db.QueryRow(ctx,
 			`UPDATE connections SET name = $1, description = $2, config = $3,
 			 status = 'unverified', updated_at = now() WHERE id = $4
-			 RETURNING id, name, type, description, config, status, last_tested_at, last_error, created_by, created_at, updated_at`,
+			 RETURNING `+connectionColumns,
 			p.Name, p.Description, p.Config, id,
-		).Scan(&c.ID, &c.Name, &c.Type, &c.Description, &c.Config, &c.Status, &c.LastTestedAt, &c.LastError, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt)
+		)
 	}
+	c, err := scanConnection(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.Connection{}, ErrNotFound
@@ -149,15 +158,27 @@ func (r *Repository) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
-func (r *Repository) SetTestResult(ctx context.Context, id string, healthy bool, lastError string) error {
+// TestResult is the outcome of dialing out to a connection's underlying
+// system - see connections.HealthError/Classify for where Code/Remediation
+// come from.
+type TestResult struct {
+	Healthy          bool
+	Error            string
+	ErrorCode        string
+	ErrorRemediation string
+	DurationMs       int64
+}
+
+func (r *Repository) SetTestResult(ctx context.Context, id string, res TestResult) error {
 	status := domain.ConnectionStatusHealthy
-	if !healthy {
+	if !res.Healthy {
 		status = domain.ConnectionStatusUnhealthy
 	}
 	now := time.Now()
 	_, err := r.db.Exec(ctx,
-		`UPDATE connections SET status = $1, last_tested_at = $2, last_error = $3 WHERE id = $4`,
-		status, now, lastError, id,
+		`UPDATE connections SET status = $1, last_tested_at = $2, last_error = $3,
+		 last_error_code = $4, last_error_remediation = $5, last_check_duration_ms = $6 WHERE id = $7`,
+		status, now, res.Error, res.ErrorCode, res.ErrorRemediation, res.DurationMs, id,
 	)
 	return err
 }

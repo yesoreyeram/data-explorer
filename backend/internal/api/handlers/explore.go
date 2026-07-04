@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 
 	"github.com/yesoreyeram/data-explorer/backend/internal/audit"
@@ -82,16 +81,7 @@ func (h *Handlers) ExploreQuery(w http.ResponseWriter, r *http.Request) {
 	h.recordAudit(r, "connection.query", "connection", resourceID, outcome, meta)
 
 	if err != nil {
-		switch {
-		case errors.Is(err, connections.ErrNotFound):
-			httpx.WriteError(w, http.StatusNotFound, "not_found", "connection not found")
-		case errors.Is(err, connections.ErrUnsupportedType):
-			httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "unsupported connection type")
-		case errors.Is(err, connections.ErrRateLimited):
-			httpx.WriteError(w, http.StatusTooManyRequests, "rate_limited", err.Error())
-		default:
-			httpx.WriteError(w, http.StatusBadGateway, "query_failed", err.Error())
-		}
+		writeQueryError(w, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, result)

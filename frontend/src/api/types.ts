@@ -66,6 +66,20 @@ export interface AuthConfig {
   kerberosKeytabPath?: string;
 }
 
+// ErrorCode mirrors backend/internal/connections.ErrorCode - the fixed
+// vocabulary every connector error is classified into (see Classify), so the
+// UI can key a badge/icon off a stable value instead of pattern-matching a
+// raw driver message.
+export type ErrorCode =
+  | "timeout"
+  | "network_unreachable"
+  | "auth_failed"
+  | "permission_denied"
+  | "not_found"
+  | "rate_limited"
+  | "invalid_config"
+  | "unknown";
+
 export interface Connection {
   id: string;
   name: string;
@@ -75,6 +89,9 @@ export interface Connection {
   status: ConnectionStatus;
   lastTestedAt?: string;
   lastError?: string;
+  lastErrorCode?: ErrorCode;
+  lastErrorRemediation?: string;
+  lastCheckDurationMs?: number;
   createdBy: string;
   createdAt: string;
   updatedAt: string;
@@ -254,7 +271,7 @@ export interface AuditLog {
 }
 
 export interface ApiErrorBody {
-  error: { code: string; message: string };
+  error: { code: string; message: string; remediation?: string; detail?: string };
 }
 
 // Mirrors backend/internal/catalog.Entry - a static, first-party list of

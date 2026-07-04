@@ -95,6 +95,37 @@ export function CloudConnectionFields({ type, config, onConfigChange, secret, on
           <label htmlFor="aws-session-token">Session token (optional, for temporary credentials){secretHint(isEdit)}</label>
           <input id="aws-session-token" className="input" type="password" value={secret.sessionToken ?? ""} onChange={(e) => onSecretChange({ sessionToken: e.target.value })} />
         </div>
+
+        <p className="field-hint" style={{ marginTop: 10, marginBottom: 10 }}>
+          Optionally assume an IAM role on top of the credentials above (or the ambient identity) via AWS STS - useful for
+          reaching resources in another account without a separate key per account.
+        </p>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div className="field">
+            <label htmlFor="aws-role-arn">Role ARN (optional)</label>
+            <input
+              id="aws-role-arn"
+              className="input"
+              placeholder="arn:aws:iam::123456789012:role/data-explorer"
+              value={str(config.roleArn)}
+              onChange={(e) => onConfigChange({ roleArn: e.target.value })}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="aws-role-external-id">External ID (optional)</label>
+            <input id="aws-role-external-id" className="input" value={str(config.roleExternalId)} onChange={(e) => onConfigChange({ roleExternalId: e.target.value })} />
+          </div>
+          <div className="field" style={{ gridColumn: "1 / -1" }}>
+            <label htmlFor="aws-role-session-name">Role session name (optional)</label>
+            <input
+              id="aws-role-session-name"
+              className="input"
+              placeholder="data-explorer"
+              value={str(config.roleSessionName)}
+              onChange={(e) => onConfigChange({ roleSessionName: e.target.value })}
+            />
+          </div>
+        </div>
       </>
     );
   }
@@ -133,6 +164,20 @@ export function CloudConnectionFields({ type, config, onConfigChange, secret, on
             value={secret.serviceAccountKeyJson ?? ""}
             onChange={(e) => onSecretChange({ serviceAccountKeyJson: e.target.value })}
           />
+        </div>
+        <div className="field">
+          <label htmlFor="gcp-impersonate">Impersonate service account (optional)</label>
+          <input
+            id="gcp-impersonate"
+            className="input"
+            placeholder="narrower-sa@project.iam.gserviceaccount.com"
+            value={str(config.impersonateServiceAccount)}
+            onChange={(e) => onConfigChange({ impersonateServiceAccount: e.target.value })}
+          />
+          <p className="field-hint">
+            Scopes the base identity above (or ADC) down to this service account's permissions - it needs
+            roles/iam.serviceAccountTokenCreator on this account.
+          </p>
         </div>
       </>
     );
@@ -182,6 +227,30 @@ export function CloudConnectionFields({ type, config, onConfigChange, secret, on
       <div className="field">
         <label htmlFor="azure-secret">Client secret{secretHint(isEdit)}</label>
         <input id="azure-secret" className="input" type="password" value={secret.clientSecret ?? ""} onChange={(e) => onSecretChange({ clientSecret: e.target.value })} />
+      </div>
+      <p className="field-hint" style={{ marginBottom: 10 }}>
+        Or authenticate with a client certificate instead of a secret (leave the client secret above blank):
+      </p>
+      <div className="field">
+        <label htmlFor="azure-cert">Client certificate (PEM or PKCS12){secretHint(isEdit)}</label>
+        <textarea
+          id="azure-cert"
+          className="textarea"
+          rows={4}
+          placeholder="-----BEGIN CERTIFICATE-----..."
+          value={secret.clientCertificate ?? ""}
+          onChange={(e) => onSecretChange({ clientCertificate: e.target.value })}
+        />
+      </div>
+      <div className="field">
+        <label htmlFor="azure-cert-password">Certificate password (optional, for encrypted/PKCS12 certs){secretHint(isEdit)}</label>
+        <input
+          id="azure-cert-password"
+          className="input"
+          type="password"
+          value={secret.clientCertificatePassword ?? ""}
+          onChange={(e) => onSecretChange({ clientCertificatePassword: e.target.value })}
+        />
       </div>
     </>
   );

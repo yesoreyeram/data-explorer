@@ -22,6 +22,12 @@ type ErrorBody struct {
 	Error struct {
 		Code    string `json:"code"`
 		Message string `json:"message"`
+		// Remediation/Detail are optional - populated when the error carries a
+		// concrete next step and/or underlying technical detail (see
+		// connections.HealthError) beyond the plain code+message every error
+		// response has.
+		Remediation string `json:"remediation,omitempty"`
+		Detail      string `json:"detail,omitempty"`
 	} `json:"error"`
 }
 
@@ -34,9 +40,18 @@ func WriteJSON(w http.ResponseWriter, status int, v any) {
 }
 
 func WriteError(w http.ResponseWriter, status int, code, message string) {
+	WriteErrorDetailed(w, status, code, message, "", "")
+}
+
+// WriteErrorDetailed is WriteError plus an actionable remediation step and/or
+// underlying technical detail, for errors that carry more than a bare
+// code+message (see connections.HealthError).
+func WriteErrorDetailed(w http.ResponseWriter, status int, code, message, remediation, detail string) {
 	var body ErrorBody
 	body.Error.Code = code
 	body.Error.Message = message
+	body.Error.Remediation = remediation
+	body.Error.Detail = detail
 	WriteJSON(w, status, body)
 }
 

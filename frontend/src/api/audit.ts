@@ -5,6 +5,7 @@ export interface AuditLogFilter {
   actorId?: string;
   action?: string;
   resourceType?: string;
+  resourceId?: string;
   since?: string;
   until?: string;
   limit?: number;

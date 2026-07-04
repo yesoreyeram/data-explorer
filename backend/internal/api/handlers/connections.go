@@ -124,6 +124,17 @@ func (h *Handlers) TestConnection(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, http.StatusTooManyRequests, "rate_limited", err.Error())
 			return
 		}
+		var he *connections.HealthError
+		if errors.As(err, &he) {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{
+				"healthy":          false,
+				"error":            he.Message,
+				"errorCode":        string(he.Code),
+				"errorRemediation": he.Remediation,
+				"errorDetail":      he.Detail(),
+			})
+			return
+		}
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"healthy": false, "error": err.Error()})
 		return
 	}
@@ -151,18 +162,36 @@ func (h *Handlers) QueryConnection(w http.ResponseWriter, r *http.Request) {
 	h.recordAudit(r, "connection.query", "connection", id, outcome, meta)
 
 	if err != nil {
-		if errors.Is(err, connections.ErrNotFound) {
-			httpx.WriteError(w, http.StatusNotFound, "not_found", "connection not found")
-			return
-		}
-		if errors.Is(err, connections.ErrRateLimited) {
-			httpx.WriteError(w, http.StatusTooManyRequests, "rate_limited", err.Error())
-			return
-		}
-		httpx.WriteError(w, http.StatusBadGateway, "query_failed", err.Error())
+		writeQueryError(w, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, result)
+}
+
+// writeQueryError maps a query/test execution error to an HTTP response,
+// preserving the structured Code/Remediation/Detail from a classified
+// connections.HealthError (see connections.Classify) instead of flattening
+// it to a bare message - shared by QueryConnection and ExploreQuery, the two
+// handlers that run a connector query rather than a CRUD operation.
+func writeQueryError(w http.ResponseWriter, err error) {
+	if errors.Is(err, connections.ErrNotFound) {
+		httpx.WriteError(w, http.StatusNotFound, "not_found", "connection not found")
+		return
+	}
+	if errors.Is(err, connections.ErrUnsupportedType) {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "unsupported connection type")
+		return
+	}
+	if errors.Is(err, connections.ErrRateLimited) {
+		httpx.WriteError(w, http.StatusTooManyRequests, "rate_limited", err.Error())
+		return
+	}
+	var he *connections.HealthError
+	if errors.As(err, &he) {
+		httpx.WriteErrorDetailed(w, http.StatusBadGateway, string(he.Code), he.Message, he.Remediation, he.Detail())
+		return
+	}
+	httpx.WriteError(w, http.StatusBadGateway, "query_failed", err.Error())
 }
 
 func writeConnectionsError(w http.ResponseWriter, err error) {

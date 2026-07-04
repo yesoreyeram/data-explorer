@@ -1,5 +1,5 @@
 import { api } from "./client";
-import type { Connection, ConnectionType, DataFrame, QuerySpec } from "./types";
+import type { Connection, ConnectionType, DataFrame, ErrorCode, QuerySpec } from "./types";
 
 export interface ConnectionInput {
   name: string;
@@ -33,8 +33,16 @@ export async function deleteConnection(id: string): Promise<void> {
   await api.delete(`/connections/${id}`);
 }
 
-export async function testConnection(id: string): Promise<{ healthy: boolean; error?: string }> {
-  const res = await api.post<{ healthy: boolean; error?: string }>(`/connections/${id}/test`);
+export interface TestConnectionResult {
+  healthy: boolean;
+  error?: string;
+  errorCode?: ErrorCode;
+  errorRemediation?: string;
+  errorDetail?: string;
+}
+
+export async function testConnection(id: string): Promise<TestConnectionResult> {
+  const res = await api.post<TestConnectionResult>(`/connections/${id}/test`);
   return res.data;
 }
 

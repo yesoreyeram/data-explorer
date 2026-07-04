@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/yesoreyeram/data-explorer/backend/internal/domain"
 	"github.com/yesoreyeram/data-explorer/backend/internal/platform/crypto"
@@ -91,6 +92,9 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 
 // Test dials out to the connection's underlying system to verify
 // connectivity/credentials and records the result on the connection record.
+// A failure is classified (see HealthError/Classify) before it's persisted
+// or returned, so callers get a stable code and an actionable next step
+// instead of just whatever string the underlying driver/SDK produced.
 func (s *Service) Test(ctx context.Context, id string) error {
 	if !s.limiter.Allow(id) {
 		return ErrRateLimited
@@ -109,15 +113,25 @@ func (s *Service) Test(ctx context.Context, id string) error {
 		return err
 	}
 
+	start := time.Now()
 	testErr := connector.Test(ctx, conn.Config, secret)
-	errMsg := ""
+	duration := time.Since(start).Milliseconds()
+
+	result := TestResult{Healthy: testErr == nil, DurationMs: duration}
+	var classified *HealthError
 	if testErr != nil {
-		errMsg = testErr.Error()
+		classified = Classify(testErr)
+		result.Error = classified.Message
+		result.ErrorCode = string(classified.Code)
+		result.ErrorRemediation = classified.Remediation
 	}
-	if err := s.repo.SetTestResult(ctx, id, testErr == nil, errMsg); err != nil {
+	if err := s.repo.SetTestResult(ctx, id, result); err != nil {
 		return fmt.Errorf("record test result: %w", err)
 	}
-	return testErr
+	if classified != nil {
+		return classified
+	}
+	return nil
 }
 
 // Query executes a read query through the connection's connector and
@@ -145,7 +159,7 @@ func (s *Service) Query(ctx context.Context, id string, spec QuerySpec) (*datafr
 
 	frame, err := connector.Execute(ctx, conn.Config, secret, spec)
 	if err != nil {
-		return nil, err
+		return nil, Classify(err)
 	}
 
 	frame.Meta.SourceType = string(conn.Type)
@@ -179,7 +193,7 @@ func (s *Service) QueryAdhoc(ctx context.Context, actorID, connType string, conf
 
 	frame, err := connector.Execute(ctx, config, secret, spec)
 	if err != nil {
-		return nil, err
+		return nil, Classify(err)
 	}
 
 	frame.Meta.SourceType = connType

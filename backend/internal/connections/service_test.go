@@ -3,6 +3,7 @@ package connections
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/yesoreyeram/data-explorer/backend/pkg/dataframe"
@@ -64,13 +65,20 @@ func TestQueryAdhocUnsupportedType(t *testing.T) {
 	}
 }
 
-func TestQueryAdhocPropagatesConnectorError(t *testing.T) {
+func TestQueryAdhocClassifiesConnectorError(t *testing.T) {
 	wantErr := context.DeadlineExceeded
 	svc := newTestService(t, "stub", &stubConnector{execErr: wantErr})
 
 	_, err := svc.QueryAdhoc(context.Background(), "user-1", "stub", json.RawMessage(`{}`), nil, QuerySpec{})
-	if err != wantErr {
-		t.Fatalf("expected connector error to propagate, got %v", err)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("expected classified error to still unwrap to the original connector error, got %v", err)
+	}
+	var he *HealthError
+	if !errors.As(err, &he) {
+		t.Fatalf("expected a *HealthError, got %T: %v", err, err)
+	}
+	if he.Code != ErrCodeTimeout {
+		t.Fatalf("expected ErrCodeTimeout, got %q", he.Code)
 	}
 }
 

@@ -14,9 +14,10 @@ import type { CatalogEntry, Connection } from "../api/types";
 import { StatusBadge } from "../components/StatusBadge";
 import { PermissionGate } from "../components/PermissionGate";
 import { PERMISSIONS } from "../lib/permissions";
-import { IconPlay, IconPlug, IconPlus, IconRefresh, IconTrash } from "../components/icons";
+import { IconActivity, IconPlay, IconPlug, IconPlus, IconRefresh, IconTrash } from "../components/icons";
 import { ConnectionFormModal } from "./connections/ConnectionFormModal";
 import { ConnectionQueryModal } from "./connections/ConnectionQueryModal";
+import { ConnectionHealthModal } from "./connections/ConnectionHealthModal";
 import { CatalogBrowserModal } from "./connections/CatalogBrowserModal";
 import { Button, IconButton } from "../components/ui";
 
@@ -28,6 +29,7 @@ export function ConnectionsPage() {
   const [catalogPrefill, setCatalogPrefill] = useState<CatalogEntry | null>(null);
   const [catalogOpen, setCatalogOpen] = useState(false);
   const [queryTarget, setQueryTarget] = useState<Connection | null>(null);
+  const [healthTarget, setHealthTarget] = useState<Connection | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["connections"] });
@@ -113,8 +115,14 @@ export function ConnectionsPage() {
                 </td>
                 <td>{c.type}</td>
                 <td>
-                  <StatusBadge status={c.status} />
-                  {c.lastError && <div style={{ color: "var(--danger)", fontSize: 11 }}>{c.lastError}</div>}
+                  <button
+                    style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2, background: "none", border: 0, padding: 0, cursor: "pointer" }}
+                    onClick={() => setHealthTarget(c)}
+                    title="View health details"
+                  >
+                    <StatusBadge status={c.status} />
+                    {c.lastError && <div style={{ color: "var(--danger)", fontSize: 11 }}>{c.lastError}</div>}
+                  </button>
                 </td>
                 <td>{c.lastTestedAt ? new Date(c.lastTestedAt).toLocaleString() : "never"}</td>
                 <td>
@@ -122,6 +130,11 @@ export function ConnectionsPage() {
                     <PermissionGate permission={PERMISSIONS.connectionsTest}>
                       <IconButton label="Test connection" onClick={() => handleTest(c.id)} disabled={testingId === c.id}>
                         <IconRefresh width={14} height={14} />
+                      </IconButton>
+                    </PermissionGate>
+                    <PermissionGate permission={PERMISSIONS.connectionsTest}>
+                      <IconButton label="View health" onClick={() => setHealthTarget(c)}>
+                        <IconActivity width={14} height={14} />
                       </IconButton>
                     </PermissionGate>
                     <PermissionGate permission={PERMISSIONS.connectionsRead}>
@@ -177,6 +190,8 @@ export function ConnectionsPage() {
       )}
 
       {queryTarget && <ConnectionQueryModal connection={queryTarget} onClose={() => setQueryTarget(null)} />}
+
+      {healthTarget && <ConnectionHealthModal connection={healthTarget} onClose={() => setHealthTarget(null)} />}
     </div>
   );
 }

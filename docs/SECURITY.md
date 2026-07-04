@@ -196,6 +196,31 @@ signing all get the SDK's own scrutiny rather than this project's.
   parameters, never string-concatenated) - the same parameterized-query
   discipline as the SQL connectors, just via DynamoDB's own expression
   syntax rather than SQL placeholders.
+- **Each cloud also supports scoping a base identity down further, on top of
+  (not instead of) the ambient-credential fallback above**: AWS
+  `roleArn`/`roleExternalId`/`roleSessionName` assume an IAM role via STS,
+  GCP `impersonateServiceAccount` impersonates a narrower service account via
+  the IAM Credentials API, and Azure accepts a `clientCertificate` as an
+  alternative to `clientSecret` for the same service principal. These are
+  all non-secret config (the role ARN/service account email/tenant-client
+  IDs aren't sensitive) except the certificate itself, which is stored in
+  the encrypted secret exactly like a client secret or API key. None of them
+  widen what a connection can reach - they're a way to hand it *less* than
+  the base identity has, per connection, without minting a new long-lived
+  key for every target account/service.
+
+## Health-check error messages don't leak secrets
+
+`connections.Classify` (see `ARCHITECTURE.md`) turns a connector failure
+into a `HealthError` with a `Message`/`Remediation` written for the UI, plus
+a `Detail()` carrying the underlying driver/SDK error text for debugging.
+That underlying text is whatever the driver itself produced - none of the
+classification helpers echo back the connection's config or decrypted
+secret, and secrets are never part of an error value in the first place
+(they're read out of the `map[string]string` passed to `Connector.Test`,
+never wrapped into a returned error). A wrong password surfaces as "the
+database rejected the username or password", not the password that was
+tried.
 
 ## Guardrails at every layer
 

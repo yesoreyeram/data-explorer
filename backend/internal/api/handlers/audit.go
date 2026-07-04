@@ -15,6 +15,7 @@ func (h *Handlers) ListAuditLogs(w http.ResponseWriter, r *http.Request) {
 		ActorID:      q.Get("actorId"),
 		Action:       q.Get("action"),
 		ResourceType: q.Get("resourceType"),
+		ResourceID:   q.Get("resourceId"),
 	}
 	if limit, err := strconv.Atoi(q.Get("limit")); err == nil {
 		filter.Limit = limit

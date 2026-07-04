@@ -19,7 +19,13 @@ in from day one.
   (Log Analytics, Blob Storage) — with static credentials as an option, but
   defaulting to each cloud's own ambient identity (IAM role, Application
   Default Credentials, or `DefaultAzureCredential`) so nothing long-lived has
-  to be stored.
+  to be stored. Scope a base identity down further with AWS STS AssumeRole,
+  GCP service account impersonation, or an Azure client certificate as an
+  alternative to a client secret.
+- **Diagnose connection failures** with a health check panel: every failure
+  is classified into a stable error code, a plain-language message, and a
+  concrete next step to try — not a raw driver/SDK error string — alongside
+  a history of recent checks.
 - **Explore ad-hoc**, no pipeline required: pick a saved connection or spin
   up a temporary one (never persisted - credentials go straight into the
   request and nowhere else), author a query, and get a table back on the
@@ -57,10 +63,12 @@ in from day one.
 | ![Integration catalog](docs/screenshots/15-catalog-browser.png) Integration catalog browser | ![Prefilled connection](docs/screenshots/17-catalog-prefilled-form.png) Connection form prefilled from the catalog |
 | ![Explore a saved connection](docs/screenshots/20-explore-saved-result.png) Explore: query a saved connection | ![Explore a temporary connection](docs/screenshots/22-explore-temporary-result.png) Explore: query a temporary (never-persisted) connection |
 | ![Workflow schedule](docs/screenshots/25-workflow-schedule-modal.png) Cron schedule with presets | ![Scheduled workflows list](docs/screenshots/27-workflows-list-scheduled.png) Scheduled workflow at a glance |
+| ![Connection health panel](docs/screenshots/29-connection-health-panel.png) Health check: classified error + remediation + history | ![AWS assume role](docs/screenshots/31-aws-assume-role-fields.png) AWS STS AssumeRole as an alternative to a static key |
 
 More in [`docs/screenshots/`](docs/screenshots/), including the login page,
-connections list, workflows list, user/role administration, and the Azure
-connection form.
+connections list, workflows list, user/role administration, the Azure
+connection form, and the GCP service account impersonation / Azure client
+certificate fields.
 
 ## Stack
 
