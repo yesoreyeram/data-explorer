@@ -1,107 +1,12 @@
-/* Design tokens. Theme switching works by toggling data-theme on <html>;
-   every color in the app is a var() reference so light/dark/system stay in
-   sync with zero per-component branching.
+/* Global entry — imports the design tokens layer and then adds only the
+   base element resets. All *component* styling lives in `styles/app.css`;
+   all *tokens* live in `styles/tokens.css`. Keep this file tiny. */
 
-   Palette is deliberately near-monochrome: grayscale for every structural
-   color (surfaces, borders, text) and for the accent itself (accent = ink -
-   near-black on light, near-white on dark), so a screen never reads as
-   "colorful". The three status hues (success/warning/danger) are the only
-   color left in the system, kept desaturated, and used sparingly (a small
-   dot, not a filled chip) - see .badge in app.css. */
-:root {
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
-  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
+@import "./styles/tokens.css";
 
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-
-  --space-1: 4px;
-  --space-2: 8px;
-  --space-3: 12px;
-  --space-4: 16px;
-  --space-5: 20px;
-  --space-6: 28px;
-
-  --sidebar-width: 200px;
-  --sidebar-width-collapsed: 52px;
-  --topbar-height: 40px;
-
-  --success: hsl(152 42% 36%);
-  --success-soft: hsl(152 42% 36% / 14%);
-  --warning: hsl(38 70% 42%);
-  --warning-soft: hsl(38 70% 42% / 14%);
-  --danger: hsl(3 55% 48%);
-  --danger-soft: hsl(3 55% 48% / 14%);
-}
-
-:root,
-[data-theme="light"] {
-  --bg-canvas: hsl(0 0% 97%);
-  --bg-surface: hsl(0 0% 100%);
-  --bg-surface-raised: hsl(0 0% 100%);
-  --bg-sunken: hsl(0 0% 95%);
-  --bg-hover: hsl(0 0% 92.5%);
-  --border: hsl(0 0% 88%);
-  --border-strong: hsl(0 0% 76%);
-  --text-primary: hsl(0 0% 9%);
-  --text-secondary: hsl(0 0% 38%);
-  --text-tertiary: hsl(0 0% 56%);
-  --shadow-color: 0 0% 40%;
-
-  --accent: hsl(0 0% 9%);
-  --accent-strong: hsl(0 0% 0%);
-  --accent-contrast: hsl(0 0% 100%);
-  --accent-soft: hsl(0 0% 9% / 7%);
-  --focus-ring: hsl(0 0% 9% / 16%);
-  color-scheme: light;
-}
-
-[data-theme="dark"] {
-  --bg-canvas: hsl(0 0% 7%);
-  --bg-surface: hsl(0 0% 10%);
-  --bg-surface-raised: hsl(0 0% 13%);
-  --bg-sunken: hsl(0 0% 5%);
-  --bg-hover: hsl(0 0% 16%);
-  --border: hsl(0 0% 19%);
-  --border-strong: hsl(0 0% 28%);
-  --text-primary: hsl(0 0% 95%);
-  --text-secondary: hsl(0 0% 68%);
-  --text-tertiary: hsl(0 0% 48%);
-  --shadow-color: 0 0% 0%;
-
-  --accent: hsl(0 0% 93%);
-  --accent-strong: hsl(0 0% 100%);
-  --accent-contrast: hsl(0 0% 8%);
-  --accent-soft: hsl(0 0% 93% / 10%);
-  --focus-ring: hsl(0 0% 93% / 20%);
-  color-scheme: dark;
-}
-
-@media (prefers-color-scheme: dark) {
-  [data-theme="system"] {
-    --bg-canvas: hsl(0 0% 7%);
-    --bg-surface: hsl(0 0% 10%);
-    --bg-surface-raised: hsl(0 0% 13%);
-    --bg-sunken: hsl(0 0% 5%);
-    --bg-hover: hsl(0 0% 16%);
-    --border: hsl(0 0% 19%);
-    --border-strong: hsl(0 0% 28%);
-    --text-primary: hsl(0 0% 95%);
-    --text-secondary: hsl(0 0% 68%);
-    --text-tertiary: hsl(0 0% 48%);
-    --shadow-color: 0 0% 0%;
-
-    --accent: hsl(0 0% 93%);
-    --accent-strong: hsl(0 0% 100%);
-    --accent-contrast: hsl(0 0% 8%);
-    --accent-soft: hsl(0 0% 93% / 10%);
-    --focus-ring: hsl(0 0% 93% / 20%);
-    color-scheme: dark;
-  }
-}
-
-* {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }
 
@@ -114,11 +19,12 @@ body,
 body {
   margin: 0;
   font-family: var(--font-sans);
-  font-size: 12.5px;
-  line-height: 1.5;
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-normal);
   background: var(--bg-canvas);
   color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 a {
@@ -141,11 +47,20 @@ textarea {
   color: inherit;
 }
 
+/* App-wide focus-visible ring — every focusable primitive inherits this
+   through :focus-visible so a11y stays consistent even for third-party
+   controls (React Flow handles, native <a>, etc.). */
+:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 var(--focus-ring-width) var(--focus-ring);
+  border-radius: var(--radius-sm);
+}
+
 ::selection {
   background: var(--accent-soft);
 }
 
-/* Scrollbars: unobtrusive, but still usable - dense UIs live and die on this. */
+/* Scrollbars: unobtrusive, but still usable — dense UIs live and die on this. */
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--border-strong) transparent;
@@ -158,7 +73,21 @@ textarea {
 
 ::-webkit-scrollbar-thumb {
   background: var(--border-strong);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   border: 2px solid transparent;
   background-clip: padding-box;
+}
+
+/* Screen-reader-only utility — used for accessible labels on visual-only
+   controls (StatTile trend arrow, PageHeader eyebrow icon, ...). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
