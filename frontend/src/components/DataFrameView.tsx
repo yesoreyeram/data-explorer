@@ -1,5 +1,8 @@
 import type { DataFrame } from "../api/types";
 import { DataTable } from "./DataTable";
+import { downloadFrame } from "../lib/exportFrame";
+import { IconDownload } from "./icons";
+import { Button } from "./ui";
 
 const TYPE_COLORS: Record<string, string> = {
   string: "var(--accent)",
@@ -19,12 +22,22 @@ export function DataFrameView({ frame }: { frame: DataFrame }) {
 
   return (
     <div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
-        {frame.schema.fields.map((f) => (
-          <span key={f.name} className="badge" title={f.nullable ? "nullable" : "not null"}>
-            {f.name} <span style={{ color: TYPE_COLORS[f.type] ?? "inherit" }}>{f.type}</span>
-          </span>
-        ))}
+      <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", gap: 6, marginBottom: 8 }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {frame.schema.fields.map((f) => (
+            <span key={f.name} className="badge" title={f.nullable ? "nullable" : "not null"}>
+              {f.name} <span style={{ color: TYPE_COLORS[f.type] ?? "inherit" }}>{f.type}</span>
+            </span>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+          <Button size="sm" onClick={() => downloadFrame(frame, "csv")}>
+            <IconDownload width={12} height={12} /> CSV
+          </Button>
+          <Button size="sm" onClick={() => downloadFrame(frame, "json")}>
+            <IconDownload width={12} height={12} /> JSON
+          </Button>
+        </div>
       </div>
 
       <DataTable columns={columns} rows={frame.rows} />

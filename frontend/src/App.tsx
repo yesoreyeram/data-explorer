@@ -7,6 +7,7 @@ import { ProtectedRoute } from "./components/ProtectedRoute";
 import { LoginPage } from "./pages/LoginPage";
 import { RegisterPage } from "./pages/RegisterPage";
 import { DashboardPage } from "./pages/DashboardPage";
+import { ExplorePage } from "./pages/ExplorePage";
 import { ConnectionsPage } from "./pages/ConnectionsPage";
 import { WorkflowsPage } from "./pages/WorkflowsPage";
 import { WorkflowBuilderPage } from "./pages/WorkflowBuilderPage";
@@ -38,6 +39,7 @@ export default function App() {
           <Route element={<ProtectedRoute />}>
             <Route element={<AppShell />}>
               <Route path="/" element={<DashboardPage />} />
+              <Route path="/explore" element={<ExplorePage />} />
               <Route path="/connections" element={<ConnectionsPage />} />
               <Route path="/workflows" element={<WorkflowsPage />} />
               <Route path="/workflows/:id" element={<WorkflowBuilderPage />} />

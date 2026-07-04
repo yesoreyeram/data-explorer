@@ -4,7 +4,7 @@ import { PermissionGate } from "../PermissionGate";
 import { PERMISSIONS } from "../../lib/permissions";
 import { useAuthStore } from "../../state/authStore";
 import { useSidebarStore } from "../../state/sidebarStore";
-import { IconDatabase, IconHome, IconLogout, IconPanelLeft, IconShield, IconUsers, IconWorkflow } from "../icons";
+import { IconDatabase, IconHome, IconLogout, IconPanelLeft, IconSearch, IconShield, IconUsers, IconWorkflow } from "../icons";
 import { IconButton } from "../ui";
 
 const linkClass = ({ isActive }: { isActive: boolean }) => "nav-link" + (isActive ? " active" : "");
@@ -35,6 +35,11 @@ export function Sidebar() {
         <NavLink to="/" end className={linkClass} title="Dashboard">
           <IconHome className="icon" /> <span>Dashboard</span>
         </NavLink>
+        <PermissionGate permission={PERMISSIONS.connectionsRead}>
+          <NavLink to="/explore" className={linkClass} title="Explore">
+            <IconSearch className="icon" /> <span>Explore</span>
+          </NavLink>
+        </PermissionGate>
         <PermissionGate permission={PERMISSIONS.connectionsRead}>
           <NavLink to="/connections" className={linkClass} title="Connections">
             <IconDatabase className="icon" /> <span>Connections</span>

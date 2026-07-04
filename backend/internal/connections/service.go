@@ -161,6 +161,34 @@ func (s *Service) Query(ctx context.Context, id string, spec QuerySpec) (*datafr
 	return frame, nil
 }
 
+// QueryAdhoc executes a read query against a connection definition that is
+// never persisted - config and secret exist only in memory for the duration
+// of this call. It powers the "temporary connection" mode of the ad-hoc
+// exploration page; querying a saved connection instead goes through Query.
+// actorID rate-limits per caller, since there's no connection ID to key the
+// per-connection limiter on.
+func (s *Service) QueryAdhoc(ctx context.Context, actorID, connType string, config json.RawMessage, secret map[string]string, spec QuerySpec) (*dataframe.Frame, error) {
+	if !s.limiter.Allow("adhoc:" + actorID) {
+		return nil, ErrRateLimited
+	}
+
+	connector, err := s.registry.Get(connType)
+	if err != nil {
+		return nil, err
+	}
+
+	frame, err := connector.Execute(ctx, config, secret, spec)
+	if err != nil {
+		return nil, err
+	}
+
+	frame.Meta.SourceType = connType
+	frame.Meta.Name = "(temporary connection)"
+	frame.TruncateCells(dataframe.DefaultMaxCellBytes)
+
+	return frame, nil
+}
+
 func (s *Service) encryptSecret(values map[string]string) (string, error) {
 	if len(values) == 0 {
 		return "", nil

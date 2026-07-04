@@ -20,6 +20,11 @@ in from day one.
   defaulting to each cloud's own ambient identity (IAM role, Application
   Default Credentials, or `DefaultAzureCredential`) so nothing long-lived has
   to be stored.
+- **Explore ad-hoc**, no pipeline required: pick a saved connection or spin
+  up a temporary one (never persisted - credentials go straight into the
+  request and nowhere else), author a query, and get a table back on the
+  same page. Every result can be exported as CSV or JSON, and your recent
+  queries against saved connections are remembered for one-click re-run.
 - **Build** Postman/n8n-style pipelines: drag source, filter, transform
   ([JSONata](https://jsonata.org)), join, and aggregate nodes onto a canvas
   and wire them together. Every node speaks the same typed, metadata-rich
@@ -28,8 +33,8 @@ in from day one.
 - **Paginate** REST APIs (offset/limit, page number, cursor, Link header) and
   GraphQL APIs (Relay cursor connections) automatically, with hard caps so a
   misconfigured "next page" can't loop forever.
-- **Explore** results in a compact, near-monochrome UI built on a small
-  first-party component library and design-token system (`src/components/ui`,
+- **Navigate** a compact, near-monochrome UI built on a small first-party
+  component library and design-token system (`src/components/ui`,
   `src/index.css`), with a collapsible sidebar and a light/dark/system theme
   switcher.
 - **Govern** access with role-based permissions and a full audit trail of who
@@ -46,6 +51,7 @@ in from day one.
 | ![Run output & lineage](docs/screenshots/09-workflow-run-output.png) Run output with lineage | ![Audit log](docs/screenshots/10-audit-log.png) Audit log |
 | ![AWS connection](docs/screenshots/12-connection-form-aws-athena.png) AWS connection (Athena) | ![GCP connection](docs/screenshots/13-connection-form-gcp-bigquery.png) Google Cloud connection (BigQuery) |
 | ![Integration catalog](docs/screenshots/15-catalog-browser.png) Integration catalog browser | ![Prefilled connection](docs/screenshots/17-catalog-prefilled-form.png) Connection form prefilled from the catalog |
+| ![Explore a saved connection](docs/screenshots/20-explore-saved-result.png) Explore: query a saved connection | ![Explore a temporary connection](docs/screenshots/22-explore-temporary-result.png) Explore: query a temporary (never-persisted) connection |
 
 More in [`docs/screenshots/`](docs/screenshots/), including the login page,
 connections list, workflows list, user/role administration, and the Azure

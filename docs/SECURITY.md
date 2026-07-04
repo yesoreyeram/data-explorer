@@ -40,6 +40,12 @@ a public issue.
   `<PermissionGate>` hides UI a user can't use, but every API call is
   re-checked independently; hiding a button is a UX nicety, not a security
   boundary.
+- Every route is gated by exactly one permission code at the router, with
+  one documented exception: `POST /api/v1/explore/query` additionally
+  requires `connections:test` in the handler itself, but only when the
+  request body supplies a temporary (never-persisted) connection instead of
+  an existing connection ID - see "Ad-hoc exploration" below for why that
+  can't be expressed as a single route-level check.
 
 ## Secrets at rest
 
@@ -79,6 +85,44 @@ a public issue.
 - **Parameterized queries.** User-supplied `params` are always passed
   through the driver's parameter binding (`pgx`/`database/sql`), never
   string-concatenated into SQL.
+
+## Ad-hoc exploration (temporary connections)
+
+The Explore page's "temporary connection" mode lets an authenticated caller
+supply a full connection definition - type, config, and credentials -
+inline in a single request, and have the server dial out to it immediately.
+That is meaningfully more powerful than every other authenticated action in
+this system, which only ever operates on a connection the caller (or
+another sufficiently-privileged user) already created and saved:
+
+- It requires `connections:test` in addition to the route's baseline
+  `connections:read`, checked in `handlers.ExploreQuery` rather than the
+  router, since the extra requirement only applies to this one request
+  shape (an inline `connection`, not a `connectionId`). This mirrors the
+  risk of testing a saved connection - "dial out to a target with live
+  credentials and see what happens" - which already requires the same
+  permission.
+- The credentials in the request body are used exactly once, in-memory, for
+  that single `Execute` call (`connections.Service.QueryAdhoc`) and are
+  never written to the database, never logged, and never echoed back - the
+  same handling discipline as a saved connection's secret, just without the
+  encryption step because there's nothing to encrypt *to*.
+- It still goes through the same connector implementations as every saved
+  connection of that type, so the read-only SQL guard, row limits, cell
+  truncation, and per-cloud guardrails documented elsewhere in this file all
+  apply unchanged.
+- It's rate-limited per calling user (`"adhoc:" + userID`) rather than per
+  connection, since there's no connection ID to key on - see
+  `connections.Service.QueryAdhoc`.
+- Every call is still audited (`connection.query`, with `adhoc: true` in the
+  metadata and a synthetic `adhoc:<type>` resource id), so "who queried what
+  arbitrary target, when" remains answerable from the audit trail even
+  though no `Connection` row exists to attribute it to.
+
+Operators who want to restrict this capability to a smaller group than
+"anyone with connections:test" should split `connections:test` into its own
+role rather than bundling it with broader connection-management
+permissions.
 
 ## Outbound HTTP (REST/GraphQL connectors and `pkg/httpclient`)
 

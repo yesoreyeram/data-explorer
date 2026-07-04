@@ -117,6 +117,22 @@ export const IconPanelLeft = (p: IconProps) =>
     </>,
     p,
   );
+export const IconSearch = (p: IconProps) =>
+  base(
+    <>
+      <circle cx="7" cy="7" r="4.5" />
+      <path d="M13.5 13.5L10.5 10.5" />
+    </>,
+    p,
+  );
+export const IconDownload = (p: IconProps) =>
+  base(
+    <>
+      <path d="M8 1.5v8.5M4.5 6.5L8 10l3.5-3.5" />
+      <path d="M2.5 12.5h11v2h-11z" />
+    </>,
+    p,
+  );
 export const IconSettings = (p: IconProps) =>
   base(
     <>

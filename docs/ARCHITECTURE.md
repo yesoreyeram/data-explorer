@@ -297,6 +297,45 @@ resource class. Picking an entry never supplies a credential - the
 connection form's secret fields are always left blank, with the entry's
 `docsUrl` surfaced as a hint for where to go get one.
 
+## Ad-hoc exploration
+
+The Explore page (`frontend/src/pages/ExplorePage.tsx`) is a single-page
+"pick a source, write a query, see a table" flow that sits outside the
+workflow builder - not every question needs a saved pipeline. It supports
+two sources:
+
+- **A saved connection** - picks from the same list the Connections page
+  shows, and queries it through the existing `Service.Query` path
+  (`POST /api/v1/explore/query` with `connectionId`).
+- **A temporary connection** - the same per-type config form
+  (`ConnectionTypeConfigFields`, extracted out of `ConnectionFormModal` so
+  both share one implementation) but nothing is ever persisted:
+  `POST /api/v1/explore/query` with an inline `connection{type,config,secret}`
+  goes straight to `connections.Service.QueryAdhoc`, which resolves a
+  connector from the registry and calls `Execute` directly - no
+  `Connection` row, no encryption, no repository involved. Because this
+  path dials out to an arbitrary target with credentials the caller
+  supplies live, it requires `connections:test` (the same permission that
+  gates testing a saved connection) in addition to the route's baseline
+  `connections:read` - checked in the handler itself, since which
+  permission applies depends on which mode the request body uses, not the
+  route.
+
+Both modes return the same `dataframe.Frame` wire format used everywhere
+else, so `DataFrameView` (schema badges, row/column counts, CSV/JSON export)
+works identically regardless of source. The query-authoring half
+(`QuerySpecFields` + `buildQuerySpec()`/`querySpec.ts`) is the same
+extraction the ad-hoc "run query" modal on the Connections page uses, so
+adding a query shape for a new connector type only has to happen once.
+
+Two purely client-side conveniences ride on top, with no backend surface:
+a **recent queries** list (`lib/exploreHistory.ts`, `localStorage`) scoped
+to the saved-connection mode only - restoring a temporary connection's many
+non-secret fields for marginal benefit wasn't worth the complexity, so that
+mode isn't remembered - and **CSV/JSON export** on `DataFrameView` itself
+(`lib/exportFrame.ts`), which benefits every screen that renders a frame,
+not just Explore.
+
 ## Workflow execution engine
 
 A workflow's `definition` is a small DAG: `{ nodes: [...], edges: [...] }`,
@@ -385,9 +424,15 @@ A standard Vite + React + TypeScript SPA:
   footer, `Topbar.tsx` - shows the current section title), `DataTable`,
   `Modal`, `PermissionGate`. `DataFrameView` renders a dataframe's schema
   (typed column badges), rows, and metadata (row/col counts, timing,
-  source, lineage, truncation, warnings) as one unit, and `PaginationFields`
-  is the pagination-strategy config form shared by the ad-hoc query modal
-  and the workflow source node.
+  source, lineage, truncation, warnings) as one unit plus a CSV/JSON export
+  action (`lib/exportFrame.ts`), and `PaginationFields`/`QuerySpecFields`
+  are the pagination/query-shape config forms shared across the ad-hoc query
+  modal, the Explore page, and the workflow source node.
+- `src/lib/` - cross-page logic with no UI of its own: `connectionFields.ts`
+  (the `useConnectionFields` hook backing both `ConnectionFormModal` and
+  Explore's temporary-connection form), `querySpec.ts` (the query-authoring
+  form state + `buildQuerySpec`/`summarizeQuery`), `exportFrame.ts`,
+  `exploreHistory.ts`, `permissions.ts`.
 - `src/pages/connections/AuthTypeFields.tsx` - the per-auth-type config form
   (10 schemes) shared by the connection create/edit modal, mirroring
   `pkg/httpclient`'s `Authenticator` matrix field-for-field.

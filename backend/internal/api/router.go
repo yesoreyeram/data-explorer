@@ -75,6 +75,10 @@ func NewRouter(cfg *config.Config, h *handlers.Handlers, health *handlers.Health
 			r.With(custommw.RequirePermission(rbac.PermConnectionsRead)).Get("/", h.ListCatalog)
 		})
 
+		r.Route("/explore", func(r chi.Router) {
+			r.With(custommw.RequirePermission(rbac.PermConnectionsRead)).Post("/query", h.ExploreQuery)
+		})
+
 		r.Route("/workflows", func(r chi.Router) {
 			r.With(custommw.RequirePermission(rbac.PermWorkflowsRead)).Get("/", h.ListWorkflows)
 			r.With(custommw.RequirePermission(rbac.PermWorkflowsWrite)).Post("/", h.CreateWorkflow)

@@ -134,12 +134,12 @@ new UI code:
 - **Spacing/sizing comes from the token scale** (`--space-1` through
   `--space-6`, `--radius-sm/md/lg`) - avoid one-off pixel values in new
   component CSS.
-- Not everything has been migrated to `ui/` primitives - form-heavy modals
-  with many repeated fields (`ConnectionFormModal`'s cloud/auth sub-forms,
-  `PaginationFields`, `NodeConfigPanel`) still use the raw classes directly.
-  That's fine: the classes *are* the design system, the `ui/` components are
-  just a typed convenience over them, so there's no visual or behavioral gap
-  between the two.
+- Not everything has been migrated to `ui/` primitives - the deepest,
+  most-repeated field sets (`AuthTypeFields`, `CloudConnectionFields`,
+  `CloudQueryFields`, `PaginationFields`, `NodeConfigPanel`) still use the
+  raw classes directly. That's fine: the classes *are* the design system,
+  the `ui/` components are just a typed convenience over them, so there's no
+  visual or behavioral gap between the two.
 
 ## Adding a new connection type (connector)
 
@@ -177,9 +177,16 @@ Steps, using the existing connectors as templates
    ```go
    connectorRegistry.Register("my-source", connectors.NewMySource())
    ```
-6. Add the type to `domain.ConnectionType` (`internal/domain/models.go`) and
-   to the frontend's `ConnectionType` union (`frontend/src/api/types.ts`) and
-   `ConnectionFormModal.tsx` (add the type-specific fields).
+6. Add the type to `domain.ConnectionType` (`internal/domain/models.go`), the
+   frontend's `ConnectionType` union (`frontend/src/api/types.ts`), and the
+   type-specific config fields in
+   `frontend/src/pages/connections/ConnectionTypeConfigFields.tsx` - this one
+   component backs both `ConnectionFormModal` (persisted) and the Explore
+   page's temporary-connection mode (never persisted), so it only needs
+   adding once. If the type supports ad-hoc queries, add its query-shape
+   fields to `frontend/src/components/QuerySpecFields.tsx` and
+   `buildQuerySpec()`/`summarizeQuery()` in `lib/querySpec.ts` - shared the
+   same way across the query modal and the Explore page.
 
 ### Adding a new HTTP auth scheme
 

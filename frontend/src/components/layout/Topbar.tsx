@@ -3,6 +3,7 @@ import { useLocation } from "react-router-dom";
 import { ThemeSwitcher } from "../ThemeSwitcher";
 
 const SECTION_TITLES: { prefix: string; title: string }[] = [
+  { prefix: "/explore", title: "Explore" },
   { prefix: "/connections", title: "Connections" },
   { prefix: "/workflows", title: "Workflows" },
   { prefix: "/audit-log", title: "Audit log" },
