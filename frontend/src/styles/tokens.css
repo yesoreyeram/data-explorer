@@ -1,0 +1,199 @@
+/* Design tokens — single source of truth for every color, size, spacing,
+   radius, shadow, and motion value in the app. Every component reads from
+   these via `var(--token-name)`; hard-coded hex/px in a `.tsx` or `.css`
+   file is a bug.
+
+   Structure:
+     1. Non-themed primitives:   typography, spacing, radius, motion, layout,
+                                 status hues (never change between themes).
+     2. Semantic theme tokens:   surfaces, borders, text, accent, shadow —
+                                 defined once per theme so a single
+                                 `data-theme=""` swap re-skins the whole app.
+
+   Palette philosophy: deliberately near-monochrome. Grayscale for every
+   structural color and for the accent itself (accent = ink — near-black on
+   light, near-white on dark) so no screen ever reads as "colorful". The
+   three status hues (success/warning/danger) are the only survivors and are
+   confined to a small dot rather than a filled background — see the
+   `.badge` block in `app.css` for the rationale.
+*/
+
+:root {
+  /* ── Typography scale ─────────────────────────────────────────────── */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
+
+  --font-size-xs: 10.5px;   /* eyebrow labels, table meta, dot-badge text */
+  --font-size-sm: 11.5px;   /* form labels, nav links, dense captions     */
+  --font-size-md: 12.5px;   /* default body / card titles                 */
+  --font-size-lg: 14px;     /* section headings inside a page             */
+  --font-size-xl: 16px;     /* page titles                                */
+  --font-size-2xl: 21px;    /* stat tile values                           */
+  --font-size-3xl: 26px;    /* hero numbers (auth, welcome)               */
+
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 650;
+
+  --line-height-tight: 1.25;
+  --line-height-normal: 1.5;
+
+  --letter-spacing-tight: -0.02em;
+  --letter-spacing-eyebrow: 0.07em; /* uppercase eyebrows / section labels */
+
+  /* ── Spacing scale (4-based) ──────────────────────────────────────── */
+  --space-0: 0;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 28px;
+  --space-7: 40px;
+  --space-8: 56px;
+
+  /* ── Radii ────────────────────────────────────────────────────────── */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;    /* outer app shell / hero cards (clapet-style)   */
+  --radius-pill: 999px;
+
+  /* ── Motion ───────────────────────────────────────────────────────── */
+  --duration-fast: 90ms;
+  --duration-base: 150ms;
+  --duration-slow: 240ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-emphasized: cubic-bezier(0.3, 0, 0, 1);
+
+  /* ── Layout ───────────────────────────────────────────────────────── */
+  --sidebar-width: 208px;
+  --sidebar-width-collapsed: 52px;
+  --topbar-height: 44px;
+  --content-max-width: 1440px;
+
+  /* ── Status hues (theme-independent, desaturated) ─────────────────── */
+  --success: hsl(152 42% 36%);
+  --success-soft: hsl(152 42% 36% / 14%);
+  --warning: hsl(38 70% 42%);
+  --warning-soft: hsl(38 70% 42% / 14%);
+  --danger: hsl(3 55% 48%);
+  --danger-soft: hsl(3 55% 48% / 14%);
+  --info: hsl(211 44% 44%);
+  --info-soft: hsl(211 44% 44% / 14%);
+
+  /* Focus ring width — kept as a token so a11y tuning is one edit */
+  --focus-ring-width: 3px;
+}
+
+/* ── Semantic tokens — LIGHT ─────────────────────────────────────────── */
+:root,
+[data-theme="light"] {
+  --bg-canvas: hsl(0 0% 97%);
+  --bg-surface: hsl(0 0% 100%);
+  --bg-surface-raised: hsl(0 0% 100%);
+  --bg-sunken: hsl(0 0% 95%);
+  --bg-hover: hsl(0 0% 92.5%);
+  --bg-active: hsl(0 0% 89%);
+
+  --border: hsl(0 0% 88%);
+  --border-strong: hsl(0 0% 76%);
+  --border-subtle: hsl(0 0% 92%);
+
+  --text-primary: hsl(0 0% 9%);
+  --text-secondary: hsl(0 0% 38%);
+  --text-tertiary: hsl(0 0% 56%);
+  --text-inverse: hsl(0 0% 100%);
+
+  --shadow-color: 0 0% 40%;
+  --shadow-sm: 0 1px 2px hsl(var(--shadow-color) / 8%);
+  --shadow-md: 0 2px 6px hsl(var(--shadow-color) / 10%), 0 1px 2px hsl(var(--shadow-color) / 6%);
+  --shadow-lg: 0 12px 32px hsl(var(--shadow-color) / 14%), 0 2px 6px hsl(var(--shadow-color) / 8%);
+
+  --accent: hsl(0 0% 9%);
+  --accent-strong: hsl(0 0% 0%);
+  --accent-contrast: hsl(0 0% 100%);
+  --accent-soft: hsl(0 0% 9% / 7%);
+  --focus-ring: hsl(0 0% 9% / 20%);
+
+  color-scheme: light;
+}
+
+/* ── Semantic tokens — DARK ──────────────────────────────────────────── */
+[data-theme="dark"] {
+  --bg-canvas: hsl(0 0% 7%);
+  --bg-surface: hsl(0 0% 10%);
+  --bg-surface-raised: hsl(0 0% 13%);
+  --bg-sunken: hsl(0 0% 5%);
+  --bg-hover: hsl(0 0% 16%);
+  --bg-active: hsl(0 0% 20%);
+
+  --border: hsl(0 0% 19%);
+  --border-strong: hsl(0 0% 28%);
+  --border-subtle: hsl(0 0% 14%);
+
+  --text-primary: hsl(0 0% 95%);
+  --text-secondary: hsl(0 0% 68%);
+  --text-tertiary: hsl(0 0% 48%);
+  --text-inverse: hsl(0 0% 8%);
+
+  --shadow-color: 0 0% 0%;
+  --shadow-sm: 0 1px 2px hsl(var(--shadow-color) / 40%);
+  --shadow-md: 0 2px 6px hsl(var(--shadow-color) / 45%), 0 1px 2px hsl(var(--shadow-color) / 30%);
+  --shadow-lg: 0 12px 32px hsl(var(--shadow-color) / 55%), 0 2px 6px hsl(var(--shadow-color) / 35%);
+
+  --accent: hsl(0 0% 93%);
+  --accent-strong: hsl(0 0% 100%);
+  --accent-contrast: hsl(0 0% 8%);
+  --accent-soft: hsl(0 0% 93% / 10%);
+  --focus-ring: hsl(0 0% 93% / 24%);
+
+  color-scheme: dark;
+}
+
+/* Data-theme "system" resolves via media query to the same dark tokens. */
+@media (prefers-color-scheme: dark) {
+  [data-theme="system"] {
+    --bg-canvas: hsl(0 0% 7%);
+    --bg-surface: hsl(0 0% 10%);
+    --bg-surface-raised: hsl(0 0% 13%);
+    --bg-sunken: hsl(0 0% 5%);
+    --bg-hover: hsl(0 0% 16%);
+    --bg-active: hsl(0 0% 20%);
+
+    --border: hsl(0 0% 19%);
+    --border-strong: hsl(0 0% 28%);
+    --border-subtle: hsl(0 0% 14%);
+
+    --text-primary: hsl(0 0% 95%);
+    --text-secondary: hsl(0 0% 68%);
+    --text-tertiary: hsl(0 0% 48%);
+    --text-inverse: hsl(0 0% 8%);
+
+    --shadow-color: 0 0% 0%;
+    --shadow-sm: 0 1px 2px hsl(var(--shadow-color) / 40%);
+    --shadow-md: 0 2px 6px hsl(var(--shadow-color) / 45%), 0 1px 2px hsl(var(--shadow-color) / 30%);
+    --shadow-lg: 0 12px 32px hsl(var(--shadow-color) / 55%), 0 2px 6px hsl(var(--shadow-color) / 35%);
+
+    --accent: hsl(0 0% 93%);
+    --accent-strong: hsl(0 0% 100%);
+    --accent-contrast: hsl(0 0% 8%);
+    --accent-soft: hsl(0 0% 93% / 10%);
+    --focus-ring: hsl(0 0% 93% / 24%);
+
+    color-scheme: dark;
+  }
+}
+
+/* a11y: honor reduced-motion for every transition/animation in the app. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}

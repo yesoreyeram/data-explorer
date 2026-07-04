@@ -368,40 +368,127 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  margin-bottom: var(--space-3);
+  margin-bottom: var(--space-4);
   gap: var(--space-3);
 }
 
-/* ---- Stat tiles ---- */
+.page-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+/* Empty-state (dedicated component variant). The `.empty-state` class in
+   the misc block below is kept for backward compat, but new code should
+   render `<EmptyState>` which produces this richer structure. */
+.empty-state-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+  color: var(--text-secondary);
+}
+.empty-state-block .empty-state-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  background: var(--bg-sunken);
+  color: var(--text-tertiary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: var(--space-1);
+}
+.empty-state-block .empty-state-title {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+}
+.empty-state-block .empty-state-description {
+  max-width: 320px;
+  font-size: var(--font-size-sm);
+  color: var(--text-tertiary);
+}
+
+/* ---- Stat tiles ----
+   Follows the FlowAI reference pattern: [icon] label on top, big value
+   below, a hairline divider, and an optional trend delta at the bottom
+   ("+12% from last week"). Icon and trend are both optional so a bare
+   `<StatTile label value />` still renders cleanly (backwards compat with
+   the previous minimal design). */
 
 .stat-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: var(--space-2);
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-3);
   margin-bottom: var(--space-4);
 }
 
 .stat-tile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-3);
+}
+
+.stat-tile-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.stat-tile-icon {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+  color: var(--text-secondary);
+  flex-shrink: 0;
 }
 
 .stat-tile .stat-label {
-  font-size: 10.5px;
-  color: var(--text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  font-weight: 600;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  font-weight: var(--font-weight-semibold);
 }
 
 .stat-tile .stat-value {
-  font-size: 21px;
-  font-weight: 650;
-  margin-top: 3px;
-  letter-spacing: -0.02em;
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: var(--letter-spacing-tight);
+  line-height: var(--line-height-tight);
 }
+
+.stat-tile-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  border-top: 1px solid var(--border-subtle);
+  padding-top: var(--space-2);
+}
+
+.stat-tile-delta {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-weight: var(--font-weight-semibold);
+}
+
+.stat-tile-delta-up   { color: var(--success); }
+.stat-tile-delta-down { color: var(--danger); }
+.stat-tile-delta-flat { color: var(--text-tertiary); }
 
 /* ---- Table ---- */
 
@@ -494,6 +581,72 @@ table.data-table tbody tr:last-child td {
 
 .badge-danger .badge-dot {
   color: var(--danger);
+}
+
+/* Soft variant: pill filled with the tone's soft color, no border. Used
+   sparingly (row-level status like "Active" in the Active Workflows table
+   in the FlowAI reference). Structural chrome only — the fill color is
+   still the same desaturated status hue, at 14% opacity. */
+.badge-soft {
+  background: var(--accent-soft);
+  border-color: transparent;
+  color: var(--text-secondary);
+}
+.badge-soft.badge-success { background: var(--success-soft); color: var(--success); }
+.badge-soft.badge-warning { background: var(--warning-soft); color: var(--warning); }
+.badge-soft.badge-danger  { background: var(--danger-soft);  color: var(--danger);  }
+.badge-soft.badge-info    { background: var(--info-soft);    color: var(--info);    }
+.badge-soft .badge-dot    { display: none; }
+
+/* ---- Kbd ----
+   Keyboard-shortcut chip. Sizing tracks the current font-size so it works
+   inline in any context (menu row, empty-state helper text, tooltip). */
+
+.kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border: 1px solid var(--border-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: var(--font-weight-semibold);
+  line-height: 1;
+}
+
+/* ---- Divider ---- */
+
+.divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: var(--space-3) 0;
+}
+.divider-vertical {
+  border: none;
+  border-left: 1px solid var(--border);
+  height: 100%;
+  margin: 0 var(--space-2);
+  align-self: stretch;
+  width: 1px;
+}
+
+/* ---- Section label (eyebrow) ----
+   Uppercase mini-label used above content groups. Same visual language as
+   `.nav-section` in the sidebar but usable in any content area. */
+
+.section-label {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-eyebrow);
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  margin-bottom: var(--space-2);
 }
 
 /* ---- Misc ---- */

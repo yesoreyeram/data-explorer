@@ -117,23 +117,29 @@ are required.
 
 ## Frontend design system conventions
 
-See [`ARCHITECTURE.md`](ARCHITECTURE.md#frontend) for the full picture. In
-new UI code:
+See [`ARCHITECTURE.md`](ARCHITECTURE.md#frontend) for the full picture, and
+[`DESIGN.md`](../DESIGN.md) for the design-token reference and per-primitive
+usage guidance. In new UI code:
 
 - **Use `src/components/ui/`** (`Button`, `IconButton`, `Field`, `Input`,
-  `Select`, `Textarea`, `Badge`, `Card`/`CardHeader`/`CardBody`, `StatTile`)
-  instead of raw `className="btn"`/`"input"`/`"field"` strings. They render
-  the exact same markup/classes, so this is purely about not hand-rolling
-  the same boilerplate (label/hint wiring, `type="button"` defaults,
-  disabled states) at every call site.
-- **Don't introduce a new color.** The palette (`src/index.css`) is
+  `Select`, `Textarea`, `Badge`, `Card`/`CardHeader`/`CardBody`, `StatTile`,
+  `Kbd`, `Divider`, `PageHeader`, `SectionLabel`, `EmptyState`) instead of
+  raw `className="btn"`/`"input"`/`"field"` strings. They render the exact
+  same markup/classes, so this is purely about not hand-rolling the same
+  boilerplate (label/hint wiring, `type="button"` defaults, disabled
+  states) at every call site.
+- **Don't introduce a new color.** The palette (`src/styles/tokens.css`) is
   intentionally near-monochrome - every structural color is grayscale, and
-  `--success`/`--warning`/`--danger` are the only hues, reserved for
-  `Badge`'s status dot. A new feature needing to convey state should reach
-  for one of those three tones, not a new hex/hsl value.
+  `--success`/`--warning`/`--danger`/`--info` are the only hues, reserved
+  for `Badge`'s status dot and the `StatTile` trend delta. A new feature
+  needing to convey state should reach for one of those four tones, not a
+  new hex/hsl value.
 - **Spacing/sizing comes from the token scale** (`--space-1` through
-  `--space-6`, `--radius-sm/md/lg`) - avoid one-off pixel values in new
-  component CSS.
+  `--space-8`, `--radius-sm/md/lg/xl/pill`, `--font-size-xs..3xl`) - avoid
+  one-off pixel values in new component CSS.
+- **Every primitive has a Storybook story.** Run `npm run storybook` inside
+  `frontend/` to browse the catalog and try variants live. Add a
+  `<Name>.stories.tsx` sibling next to any new primitive.
 - Not everything has been migrated to `ui/` primitives - the deepest,
   most-repeated field sets (`AuthTypeFields`, `CloudConnectionFields`,
   `CloudQueryFields`, `PaginationFields`, `NodeConfigPanel`) still use the
