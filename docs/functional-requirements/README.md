@@ -47,6 +47,10 @@ FRDs live alongside the architecture and security documents in
 | FR-10 | [Audit Logging & Compliance](./FR-10-audit-logging.md)                                          | Admin, Compliance officer, Auditor  |
 | FR-11 | [Observability, Guardrails & Reliability](./FR-11-observability-and-guardrails.md)              | SRE, Operator, Admin                |
 | FR-12 | [User Interface, Theming & Accessibility](./FR-12-user-interface-and-accessibility.md)          | All users                           |
+| FR-13 | [Enhanced App Guardrails](./FR-13-enhanced-guardrails.md)                                       | SRE, Admin, Editor                  |
+| FR-14 | [Navigation & Routing Improvements](./FR-14-navigation-and-routing.md)                          | All users                           |
+| FR-15 | [Dataset Visualization](./FR-15-dataset-visualization.md)                                       | Analyst, Editor, Viewer             |
+| FR-16 | [Data Frame Optimizations](./FR-16-data-frame-optimizations.md)                                 | Analyst, Editor, SRE                |
 
 ## How to read an FRD
 
