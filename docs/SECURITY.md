@@ -294,6 +294,16 @@ might fail:
   `/auth/login`, `/auth/register`, and `/auth/refresh` to blunt
   credential-stuffing and brute-force attempts
   (`internal/api/middleware/ratelimit.go`).
+- **Client IP is derived safely, not from a raw header.** The per-IP rate
+  limiter and the audit trail key on a client IP resolved by
+  `httpx.ConfigureClientIP`, which **ignores `X-Forwarded-For` by default**
+  (`TRUSTED_PROXY_MODE=none`) and uses the socket peer - so a client can't
+  spoof one header to evade the limiter or poison audit attribution. Behind a
+  trusted proxy, set `TRUSTED_PROXY_MODE=xff-depth:N` (for a fixed chain of N
+  proxies - the bundled nginx adds one, so `xff-depth:1`) or
+  `trusted-cidrs:<cidr,...>` (walk `X-Forwarded-For` right-to-left, skipping
+  trusted-proxy ranges, and take the first untrusted hop). The resolved value
+  is always a bare IP, so it is a stable rate-limit and audit key.
 - Request bodies are size-capped (1MB, `httpx.MaxRequestBodyBytes`) and
   decoded with `DisallowUnknownFields`; an oversized body fails fast with a
   clear `413 payload_too_large` rather than a confusing parse error from a

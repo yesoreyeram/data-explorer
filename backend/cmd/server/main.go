@@ -26,6 +26,7 @@ import (
 	"github.com/yesoreyeram/data-explorer/backend/internal/observability"
 	"github.com/yesoreyeram/data-explorer/backend/internal/platform/crypto"
 	"github.com/yesoreyeram/data-explorer/backend/internal/platform/dbx"
+	"github.com/yesoreyeram/data-explorer/backend/internal/platform/httpx"
 	"github.com/yesoreyeram/data-explorer/backend/internal/platform/logger"
 	"github.com/yesoreyeram/data-explorer/backend/internal/platform/migrator"
 	"github.com/yesoreyeram/data-explorer/backend/internal/scheduler"
@@ -49,6 +50,10 @@ func run() error {
 
 	log := logger.New(cfg.Log.Level, cfg.Log.Format)
 	log.Info("starting data-explorer", "env", cfg.Env, "addr", cfg.HTTP.Addr)
+
+	if err := httpx.ConfigureClientIP(cfg.HTTP.TrustedProxyMode); err != nil {
+		return fmt.Errorf("configure client IP resolution: %w", err)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

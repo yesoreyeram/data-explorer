@@ -41,6 +41,10 @@ type HTTPConfig struct {
 	AllowedOrigins  []string
 	ShutdownTimeout time.Duration
 	RequestTimeout  time.Duration
+	// TrustedProxyMode controls how the client IP is derived for rate limiting
+	// and audit: "none" (default, socket peer only), "xff-depth:N", or
+	// "trusted-cidrs:cidr,...". See httpx.ConfigureClientIP.
+	TrustedProxyMode string
 }
 
 type DBConfig struct {
@@ -68,10 +72,11 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		Env: getEnv("APP_ENV", "development"),
 		HTTP: HTTPConfig{
-			Addr:            getEnv("HTTP_ADDR", ":8080"),
-			AllowedOrigins:  splitCSV(getEnv("HTTP_ALLOWED_ORIGINS", "http://localhost:5173")),
-			ShutdownTimeout: getDuration("HTTP_SHUTDOWN_TIMEOUT", 15*time.Second),
-			RequestTimeout:  getDuration("HTTP_REQUEST_TIMEOUT", 30*time.Second),
+			Addr:             getEnv("HTTP_ADDR", ":8080"),
+			AllowedOrigins:   splitCSV(getEnv("HTTP_ALLOWED_ORIGINS", "http://localhost:5173")),
+			ShutdownTimeout:  getDuration("HTTP_SHUTDOWN_TIMEOUT", 15*time.Second),
+			RequestTimeout:   getDuration("HTTP_REQUEST_TIMEOUT", 30*time.Second),
+			TrustedProxyMode: getEnv("TRUSTED_PROXY_MODE", "none"),
 		},
 		DB: DBConfig{
 			DSN:             getEnv("DATABASE_URL", "postgres://data_explorer:data_explorer@localhost:5432/data_explorer?sslmode=disable"),
