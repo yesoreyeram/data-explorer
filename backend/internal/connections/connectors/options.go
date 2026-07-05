@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/yesoreyeram/data-explorer/backend/internal/config"
 	"github.com/yesoreyeram/data-explorer/backend/internal/connections"
 	"github.com/yesoreyeram/data-explorer/backend/pkg/httpclient"
 )
@@ -16,9 +17,9 @@ type Options struct {
 	// connection uses - HTTP(S), Postgres/MySQL TCP, cloud SDK HTTP, and the
 	// OAuth2/workload-identity token endpoints. Nil uses the default dialer.
 	DialContext httpclient.DialFunc
-	// MaxResponseBytes caps HTTP response bodies (REST/GraphQL). 0 uses the
-	// httpclient default (25MB).
-	MaxResponseBytes int64
+	// Guardrails supplies the HTTP guardrail limits (timeout, body/redirect/
+	// decompress caps) the REST and GraphQL connectors apply.
+	Guardrails config.GuardrailsConfig
 	// UserAgent, when set, identifies outbound HTTP requests.
 	UserAgent string
 	// StrictHeaders rejects reserved/hop-by-hop user-supplied request headers

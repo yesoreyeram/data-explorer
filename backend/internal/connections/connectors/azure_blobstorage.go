@@ -1,6 +1,7 @@
 package connectors
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -46,12 +47,12 @@ func executeBlobStorage(ctx context.Context, cred azcore.TokenCredential, cfg Az
 	}
 
 	if c.Key != "" {
-		return blobGetObject(ctx, client, c)
+		return blobGetObject(ctx, client, c, spec.RowLimit)
 	}
 	return blobListObjects(ctx, client, spec)
 }
 
-func blobGetObject(ctx context.Context, client *azblob.Client, c *connections.CloudQuerySpec) (*dataframe.Frame, error) {
+func blobGetObject(ctx context.Context, client *azblob.Client, c *connections.CloudQuerySpec, rowLimit int) (*dataframe.Frame, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
@@ -74,12 +75,10 @@ func blobGetObject(ctx context.Context, client *azblob.Client, c *connections.Cl
 	if format == "" {
 		format = InferObjectFormat(c.Key)
 	}
-	rows, err := ParseObjectRows(data, format, c.Delimiter)
+	frame, err := ParseObjectFrame(bytes.NewReader(data), format, c.Delimiter, connections.EffectiveRowLimit(rowLimit))
 	if err != nil {
 		return nil, err
 	}
-
-	frame := dataframe.FromRecords(rows)
 	frame.SetMeta(dataframe.Metadata{SourceType: "azure:blobStorage", Truncated: truncated, Extra: map[string]any{"key": c.Key}})
 	return frame, nil
 }

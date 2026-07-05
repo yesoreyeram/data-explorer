@@ -28,7 +28,7 @@ func TestEngineCapsPerNodeRowCount(t *testing.T) {
 
 	def := Definition{Nodes: []Node{{ID: "src", Type: NodeTypeSource}}}
 
-	engine := NewEngine(registry)
+	engine := NewEngine(registry, MaxRowsPerNode, 0)
 	result, err := engine.Run(context.Background(), def, nodes.Deps{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -38,5 +38,11 @@ func TestEngineCapsPerNodeRowCount(t *testing.T) {
 	}
 	if !result.Output.Meta.Truncated {
 		t.Fatal("expected Meta.Truncated to be set by the per-node guardrail")
+	}
+	if len(result.NodeResults) != 1 || !result.NodeResults[0].Truncated || result.NodeResults[0].RowCap != MaxRowsPerNode {
+		t.Fatalf("expected node result to include row cap/truncated metadata, got %+v", result.NodeResults)
+	}
+	if len(result.NodeResults[0].Warnings) == 0 {
+		t.Fatal("expected row-cap warning on node result")
 	}
 }

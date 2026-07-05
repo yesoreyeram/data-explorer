@@ -183,6 +183,11 @@ every outbound-call guardrail so no connector has to reimplement them:
   25MB) - the excess is discarded, not buffered, so a malicious or
   misbehaving upstream can't exhaust memory by streaming an unbounded
   response.
+- **Compressed payloads are ratio-bounded** before full decompression, so a
+  tiny gzip bomb cannot expand into an unbounded in-memory response.
+- **JSON decoding is structure-bounded**: REST/GraphQL/object JSON parsing is
+  rejected once nesting depth or token/element counts exceed the configured
+  guardrails, rather than trusting upstream payload shape.
 - **Redirects are capped** (`MaxRedirects` = 5) to stop a redirect loop
   (accidental or adversarial) from hanging a request indefinitely.
 - **Retries are bounded and jittered**: up to `RetryPolicy.MaxAttempts`
@@ -204,6 +209,26 @@ every outbound-call guardrail so no connector has to reimplement them:
   8693) tokens are cached in-memory and refreshed just before expiry, so a
   compromise of the API process at rest never exposes a long-lived token
   that wasn't already about to be re-minted.
+
+## Guardrail disclosure and shutdown probes
+
+- Guardrail warnings and failures use the existing health-error taxonomy and
+  may name only the limit, threshold, observed value, and remediation. They
+  must not include SQL text, request/response bodies, headers, connection
+  config, secrets, tokens, or decrypted credentials.
+- `429` responses include quota metadata (`quota`, `used`, `window_ms`,
+  `retry_after_ms`) and still set `Retry-After`. The limiter key is derived
+  from the socket remote address; caller-supplied `X-Forwarded-For` is not
+  trusted by the in-process limiter.
+- Explore and workflow execution can also be quota-bounded per role through
+  `GuardrailsConfig.RoleQuotas`; trips are audited as `guardrail.trip.quota`
+  so operators can distinguish business throttling from infrastructure
+  failures.
+- `/status/shutdown` is unauthenticated for load balancer probes and returns
+  only aggregate operational data (`status`, `draining`, `inflightRuns`,
+  `remainingDrainMs`) with `Cache-Control: no-store`. It must never expose
+  workflow names, user identities, connection IDs, query text, rows, errors,
+  or credentials.
 
 ## Cloud provider connectors (AWS / GCP / Azure)
 
@@ -239,6 +264,9 @@ signing all get the SDK's own scrutiny rather than this project's.
   CSV/JSON/NDJSON, for the same reason REST responses are capped -
   someone pointing a connection at a multi-gigabyte file shouldn't be able
   to bring the process down.
+- Object payload parsing is format-aware: CSV and NDJSON can be streamed into
+  frames with row limits applied during decode, while JSON arrays/objects go
+  through the same safe-depth / safe-element checks as REST and GraphQL.
 - **DynamoDB access uses the caller-supplied key condition/filter
   expressions verbatim** (passed straight to the SDK's expression
   parameters, never string-concatenated) - the same parameterized-query

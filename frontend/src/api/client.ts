@@ -81,8 +81,19 @@ api.interceptors.response.use(
 
 export function extractErrorMessage(err: unknown): string {
   if (axios.isAxiosError(err)) {
-    const body = err.response?.data as { error?: { message?: string } } | undefined;
-    if (body?.error?.message) return body.error.message;
+    const body = err.response?.data as { error?: { message?: string; remediation?: string }; remediation?: string; retry_after_ms?: number; quota?: number; used?: number } | undefined;
+    if (body?.error?.message) {
+      const parts = [body.error.message];
+      if (body.error.remediation) parts.push(body.error.remediation);
+      if (typeof body.retry_after_ms === "number") parts.push(`Retry after ${Math.ceil(body.retry_after_ms / 1000)}s.`);
+      if (typeof body.quota === "number" && typeof body.used === "number") parts.push(`Quota ${body.used}/${body.quota}.`);
+      return parts.join(" ");
+    }
+    if ((body as { code?: string })?.code === "rate_limited") {
+      const retry = typeof body?.retry_after_ms === "number" ? ` Retry after ${Math.ceil(body.retry_after_ms / 1000)}s.` : "";
+      const quota = typeof body?.quota === "number" && typeof body?.used === "number" ? ` Quota ${body.used}/${body.quota}.` : "";
+      return `Rate limit exceeded.${retry}${quota}`;
+    }
     if (err.message) return err.message;
   }
   if (err instanceof Error) return err.message;

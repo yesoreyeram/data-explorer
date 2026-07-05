@@ -3,6 +3,7 @@ package connections
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"strings"
 
@@ -76,6 +77,14 @@ func newHealthError(code ErrorCode, message, remediation string, cause error) *H
 // today - but new connector code should prefer it.
 func NewConfigError(message string) *HealthError {
 	return newHealthError(ErrCodeInvalidConfig, message, "Fix the connection's configuration and save it again.", nil)
+}
+
+func NewGuardrailError(code ErrorCode, limitName string, threshold, observed int64, suggestion string) *HealthError {
+	return newHealthError(code,
+		"A platform guardrail stopped this operation.",
+		fmt.Sprintf("%s limit is %d and observed value was %d. %s", limitName, threshold, observed, suggestion),
+		nil,
+	)
 }
 
 // Classify turns whatever error a connector, the SQL guard, or a guardrail

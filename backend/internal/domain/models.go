@@ -129,6 +129,7 @@ const (
 	ExecutionStatusRunning   ExecutionStatus = "running"
 	ExecutionStatusSucceeded ExecutionStatus = "succeeded"
 	ExecutionStatusFailed    ExecutionStatus = "failed"
+	ExecutionStatusSkipped   ExecutionStatus = "skipped"
 )
 
 type WorkflowExecution struct {

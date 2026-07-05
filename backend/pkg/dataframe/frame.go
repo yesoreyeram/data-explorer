@@ -2,21 +2,27 @@ package dataframe
 
 import "time"
 
+type dictionaryEncodedColumn struct {
+	dictionary []string
+	indexes    []int
+}
+
 // Frame is a named, typed, columnar table: parallel column slices, all the
 // same length, described by a Schema, plus Metadata about how the data was
 // produced. It is the single value type passed between workflow nodes.
 type Frame struct {
-	schema  Schema
-	cols    map[string][]any
-	numRows int
-	Meta    Metadata
+	schema   Schema
+	cols     map[string][]any
+	dictCols map[string]dictionaryEncodedColumn
+	numRows  int
+	Meta     Metadata
 }
 
-// New creates an empty Frame with the given column definitions.
 func New(fields []Field) *Frame {
 	f := &Frame{
-		schema: Schema{Fields: append([]Field(nil), fields...)},
-		cols:   make(map[string][]any, len(fields)),
+		schema:   Schema{Fields: append([]Field(nil), fields...)},
+		cols:     make(map[string][]any, len(fields)),
+		dictCols: make(map[string]dictionaryEncodedColumn),
 	}
 	for _, field := range fields {
 		f.cols[field.Name] = []any{}
@@ -25,9 +31,6 @@ func New(fields []Field) *Frame {
 	return f
 }
 
-// FromRecords builds a Frame from row-oriented data (e.g. decoded JSON or a
-// SQL driver's row maps), inferring column order (first-seen across rows),
-// types, and nullability as it goes.
 func FromRecords(rows []map[string]any) *Frame {
 	f := New(nil)
 	for _, row := range rows {
@@ -36,26 +39,16 @@ func FromRecords(rows []map[string]any) *Frame {
 	return f
 }
 
-// Schema returns a copy of the frame's current schema.
-func (f *Frame) Schema() Schema { return f.schema.clone() }
-
-// NumRows returns the number of rows in the frame.
-func (f *Frame) NumRows() int { return f.numRows }
-
-// NumCols returns the number of columns in the frame.
-func (f *Frame) NumCols() int { return len(f.schema.Fields) }
-
-// ColumnNames returns column names in schema order.
+func (f *Frame) Schema() Schema        { return f.schema.clone() }
+func (f *Frame) NumRows() int          { return f.numRows }
+func (f *Frame) NumCols() int          { return len(f.schema.Fields) }
 func (f *Frame) ColumnNames() []string { return f.schema.Names() }
 
-// Column returns the raw values of a column, in row order, or false if the
-// column doesn't exist. The returned slice must not be mutated.
 func (f *Frame) Column(name string) ([]any, bool) {
 	col, ok := f.cols[name]
 	return col, ok
 }
 
-// Row reconstructs row i as a name -> value map.
 func (f *Frame) Row(i int) map[string]any {
 	row := make(map[string]any, len(f.schema.Fields))
 	for _, field := range f.schema.Fields {
@@ -64,10 +57,6 @@ func (f *Frame) Row(i int) map[string]any {
 	return row
 }
 
-// Rows materializes every row as name -> value maps, in row order. This is
-// the boundary representation used by the JSON API and by node executors
-// that need pandas-style "apply a function per row" semantics (e.g. the
-// JSONata transform/filter nodes).
 func (f *Frame) Rows() []map[string]any {
 	rows := make([]map[string]any, f.numRows)
 	for i := 0; i < f.numRows; i++ {
@@ -76,8 +65,6 @@ func (f *Frame) Rows() []map[string]any {
 	return rows
 }
 
-// ensureColumn adds a column (backfilling prior rows with nil) if it
-// doesn't already exist.
 func (f *Frame) ensureColumn(name string, t Type) {
 	if _, ok := f.cols[name]; ok {
 		return
@@ -87,15 +74,10 @@ func (f *Frame) ensureColumn(name string, t Type) {
 	f.schema.Fields = append(f.schema.Fields, Field{Name: name, Type: t, Nullable: f.numRows > 0})
 }
 
-// AppendRow adds a row to the frame. Columns not present in the frame's
-// schema are added on the fly (existing rows backfilled with nil); columns
-// in the schema but absent from this row are treated as null. Column types
-// widen automatically as new values are observed (see unifyType).
 func (f *Frame) AppendRow(row map[string]any) {
 	for name, value := range row {
 		f.ensureColumn(name, InferType(value))
 	}
-
 	for i, field := range f.schema.Fields {
 		value, present := row[field.Name]
 		if !present || value == nil {
@@ -114,11 +96,73 @@ func (f *Frame) AppendRow(row map[string]any) {
 	f.Meta.ColumnCount = len(f.schema.Fields)
 }
 
-// SetMeta replaces the frame's metadata (row/column counts are recomputed
-// from the frame's actual shape so callers can't accidentally desync them).
 func (f *Frame) SetMeta(meta Metadata) *Frame {
 	meta.RowCount = f.numRows
 	meta.ColumnCount = len(f.schema.Fields)
 	f.Meta = meta
 	return f
+}
+
+func (f *Frame) ApplyDictionaryEncoding(threshold int) int {
+	if threshold <= 0 {
+		return 0
+	}
+	encoded := 0
+	for _, field := range f.schema.Fields {
+		if field.Type != TypeString {
+			continue
+		}
+		col := f.cols[field.Name]
+		if len(col) == 0 {
+			continue
+		}
+		dictIndex := map[string]int{}
+		dict := make([]string, 0, threshold)
+		indexes := make([]int, len(col))
+		ok := true
+		for i, raw := range col {
+			if raw == nil {
+				indexes[i] = -1
+				continue
+			}
+			s, isString := raw.(string)
+			if !isString {
+				ok = false
+				break
+			}
+			idx, exists := dictIndex[s]
+			if !exists {
+				if len(dict) >= threshold {
+					ok = false
+					break
+				}
+				idx = len(dict)
+				dictIndex[s] = idx
+				dict = append(dict, s)
+			}
+			indexes[i] = idx
+		}
+		if !ok || len(dict) == 0 {
+			continue
+		}
+		f.dictCols[field.Name] = dictionaryEncodedColumn{dictionary: dict, indexes: indexes}
+		encoded++
+	}
+	return encoded
+}
+
+func (f *Frame) GetString(col string, row int) string {
+	if dict, ok := f.dictCols[col]; ok && row >= 0 && row < len(dict.indexes) {
+		idx := dict.indexes[row]
+		if idx >= 0 && idx < len(dict.dictionary) {
+			return dict.dictionary[idx]
+		}
+		return ""
+	}
+	values, ok := f.cols[col]
+	if !ok || row < 0 || row >= len(values) || values[row] == nil {
+		return ""
+	}
+	s, _ := values[row].(string)
+	return s
 }

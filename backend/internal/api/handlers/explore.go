@@ -3,10 +3,12 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/yesoreyeram/data-explorer/backend/internal/audit"
 	"github.com/yesoreyeram/data-explorer/backend/internal/connections"
 	"github.com/yesoreyeram/data-explorer/backend/internal/platform/httpx"
+	"github.com/yesoreyeram/data-explorer/backend/internal/quota"
 	"github.com/yesoreyeram/data-explorer/backend/internal/rbac"
 	"github.com/yesoreyeram/data-explorer/backend/pkg/dataframe"
 )
@@ -52,6 +54,14 @@ func (h *Handlers) ExploreQuery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	p := principalOrEmpty(r)
+	if h.Quotas != nil {
+		quotaResult := h.Quotas.Check(p.UserID, p.Roles, quota.KindExplore, time.Now())
+		if !quotaResult.Allowed {
+			h.recordGuardrailTrip(r, "quota", map[string]any{"kind": "explore", "quota": quotaResult.Quota, "used": quotaResult.Used})
+			httpx.WriteRateLimit(w, quotaResult.Quota, quotaResult.Used, quotaResult.Window, quotaResult.RetryAfter, "Explore quota exceeded for your role. Retry after the indicated delay.")
+			return
+		}
+	}
 	if req.Connection != nil && !p.Has(rbac.PermConnectionsTest) {
 		httpx.WriteError(w, http.StatusForbidden, "forbidden", "temporary connections require the connections:test permission")
 		return
@@ -77,12 +87,19 @@ func (h *Handlers) ExploreQuery(w http.ResponseWriter, r *http.Request) {
 		meta["error"] = err.Error()
 	} else {
 		meta["rowCount"] = result.NumRows()
+		h.observeFrameWarnings(result)
 	}
 	h.recordAudit(r, "connection.query", "connection", resourceID, outcome, meta)
 
 	if err != nil {
+		for _, kind := range guardrailTripKindsFromError(err) {
+			h.recordGuardrailTrip(r, kind, map[string]any{"scope": "explore"})
+		}
 		writeQueryError(w, err)
 		return
+	}
+	for _, kind := range guardrailTripKindsFromFrameWarnings(result.Meta.Warnings) {
+		h.recordGuardrailTrip(r, kind, map[string]any{"scope": "explore"})
 	}
 	httpx.WriteJSON(w, http.StatusOK, result)
 }

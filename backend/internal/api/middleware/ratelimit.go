@@ -71,13 +71,12 @@ func (l *IPRateLimiter) cleanupLoop() {
 func (l *IPRateLimiter) Allow(key string) bool { return l.get(key).Allow() }
 
 // RateLimit builds middleware that rejects a request when limiter.Allow returns
-// false for keyFn(r), responding 429 with a Retry-After.
+// false for keyFn(r), responding 429 with rate-limit headers.
 func RateLimit(limiter Limiter, keyFn func(*http.Request) string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if !limiter.Allow(keyFn(r)) {
-				w.Header().Set("Retry-After", "1")
-				httpx.WriteError(w, http.StatusTooManyRequests, "rate_limited", "too many requests, slow down")
+				httpx.WriteRateLimit(w, 0, 0, time.Second, time.Second, "Too many requests. Retry after the indicated delay or reduce request frequency.")
 				return
 			}
 			next.ServeHTTP(w, r)

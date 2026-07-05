@@ -43,7 +43,7 @@ func TestEngineRunEndToEnd(t *testing.T) {
 		},
 	}
 
-	engine := NewEngine(registry)
+	engine := NewEngine(registry, MaxRowsPerNode, 0)
 	result, err := engine.Run(context.Background(), def, nodes.Deps{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -73,7 +73,7 @@ func TestEngineStopsAtFirstFailingNode(t *testing.T) {
 		Edges: []Edge{{ID: "e1", Source: "src", Target: "flt"}},
 	}
 
-	engine := NewEngine(registry)
+	engine := NewEngine(registry, MaxRowsPerNode, 0)
 	result, err := engine.Run(context.Background(), def, nodes.Deps{})
 	if err == nil {
 		t.Fatal("expected engine to surface the node error")

@@ -66,6 +66,16 @@ func (s *Scheduler) tick(ctx context.Context) {
 func (s *Scheduler) runOne(ctx context.Context, wf domain.Workflow) {
 	log := s.log.With("workflow_id", wf.ID, "workflow_name", wf.Name)
 
+	if s.workflows.IsWorkflowInFlight(wf.ID) {
+		reason := "skipped scheduled run: previous execution is still in flight"
+		if err := s.workflows.RecordSkippedSchedule(ctx, wf.ID, reason); err != nil {
+			log.Error("scheduler: failed to record skipped run", "error", err)
+		}
+		log.Warn("scheduler: skipped overlapping workflow run")
+		s.advanceSchedule(ctx, wf, log)
+		return
+	}
+
 	_, _, err := s.workflows.Execute(ctx, wf.ID, TriggeredBy)
 	if err != nil {
 		// A failed *workflow* run is still a recorded execution (see
@@ -75,6 +85,10 @@ func (s *Scheduler) runOne(ctx context.Context, wf domain.Workflow) {
 		log.Warn("scheduler: workflow run did not complete cleanly", "error", err)
 	}
 
+	s.advanceSchedule(ctx, wf, log)
+}
+
+func (s *Scheduler) advanceSchedule(ctx context.Context, wf domain.Workflow, log *slog.Logger) {
 	now := time.Now()
 	next, err := workflow.NextRun(wf.ScheduleCron, now)
 	if err != nil {

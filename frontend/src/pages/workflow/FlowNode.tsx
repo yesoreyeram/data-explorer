@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { Handle, Position, type NodeProps } from "reactflow";
 
 import type { NodeType } from "../../api/types";
@@ -10,6 +10,11 @@ export interface FlowNodeData {
   summary?: string;
   error?: string;
   rowsOut?: number;
+  rowCap?: number;
+  truncated?: boolean;
+  warnings?: string[];
+  deadlineAt?: string;
+  runActive?: boolean;
 }
 
 const META: Record<NodeType, { icon: typeof IconDatabase; hasInput: boolean; hasOutput: boolean }> = {
@@ -27,6 +32,22 @@ const META: Record<NodeType, { icon: typeof IconDatabase; hasInput: boolean; has
 export const FlowNode = memo(function FlowNode({ data, selected }: NodeProps<FlowNodeData>) {
   const meta = META[data.nodeType];
   const Icon = meta.icon;
+  const [now, setNow] = useState(Date.now());
+  const remainingMs = useMemo(() => (data.deadlineAt ? Math.max(0, new Date(data.deadlineAt).getTime() - now) : 0), [data.deadlineAt, now]);
+
+  useEffect(() => {
+    if (!data.runActive || !data.deadlineAt) return;
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [data.deadlineAt, data.runActive]);
+
+  const rowCap = data.rowCap ?? 100_000;
+  const rowTone =
+    data.truncated || (typeof data.rowsOut === "number" && data.rowsOut >= rowCap)
+      ? "danger"
+      : typeof data.rowsOut === "number" && data.rowsOut >= rowCap * 0.8
+        ? "warning"
+        : "neutral";
 
   return (
     <div
@@ -52,7 +73,16 @@ export const FlowNode = memo(function FlowNode({ data, selected }: NodeProps<Flo
         <div className="flow-node-type">{data.nodeType}</div>
         <div className="flow-node-label">{data.label}</div>
         {data.summary && <div className="flow-node-summary">{data.summary}</div>}
-        {typeof data.rowsOut === "number" && !data.error && <div className="flow-node-rows">{data.rowsOut} rows</div>}
+        {data.runActive && data.deadlineAt && !data.error && (
+          <div className="flow-node-rows" aria-label={`Node timeout countdown ${Math.ceil(remainingMs / 1000)} seconds remaining`}>
+            timeout {Math.ceil(remainingMs / 1000)}s
+          </div>
+        )}
+        {typeof data.rowsOut === "number" && !data.error && (
+          <div className={`flow-node-rows flow-node-rows-${rowTone}`}>
+            {data.rowsOut.toLocaleString()} rows{rowTone === "warning" ? " · near cap" : rowTone === "danger" ? " · at cap" : ""}
+          </div>
+        )}
         {data.error && <div className="flow-node-error">{data.error}</div>}
       </div>
 

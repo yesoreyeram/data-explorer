@@ -1,6 +1,7 @@
 package connectors
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -42,12 +43,12 @@ func executeGCS(ctx context.Context, opts []option.ClientOption, spec connection
 
 	bucket := client.Bucket(c.Bucket)
 	if c.Key != "" {
-		return gcsGetObject(ctx, bucket, c)
+		return gcsGetObject(ctx, bucket, c, spec.RowLimit)
 	}
 	return gcsListObjects(ctx, bucket, spec)
 }
 
-func gcsGetObject(ctx context.Context, bucket *storage.BucketHandle, c *connections.CloudQuerySpec) (*dataframe.Frame, error) {
+func gcsGetObject(ctx context.Context, bucket *storage.BucketHandle, c *connections.CloudQuerySpec, rowLimit int) (*dataframe.Frame, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
@@ -70,12 +71,10 @@ func gcsGetObject(ctx context.Context, bucket *storage.BucketHandle, c *connecti
 	if format == "" {
 		format = InferObjectFormat(c.Key)
 	}
-	rows, err := ParseObjectRows(data, format, c.Delimiter)
+	frame, err := ParseObjectFrame(bytes.NewReader(data), format, c.Delimiter, connections.EffectiveRowLimit(rowLimit))
 	if err != nil {
 		return nil, err
 	}
-
-	frame := dataframe.FromRecords(rows)
 	frame.SetMeta(dataframe.Metadata{SourceType: "gcp:gcs", Truncated: truncated, Extra: map[string]any{"key": c.Key}})
 	return frame, nil
 }

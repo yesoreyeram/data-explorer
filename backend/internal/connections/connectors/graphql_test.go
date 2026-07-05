@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/yesoreyeram/data-explorer/backend/internal/config"
 	"github.com/yesoreyeram/data-explorer/backend/internal/connections"
 )
 
@@ -26,7 +27,7 @@ func TestGraphQLExecuteRelayEdges(t *testing.T) {
 	defer srv.Close()
 
 	cfgJSON, _ := json.Marshal(GraphQLConfig{Endpoint: srv.URL})
-	g := NewGraphQL(Options{})
+	g := NewGraphQL(Options{Guardrails: config.DefaultGuardrailsConfig()})
 
 	frame, err := g.Execute(context.Background(), cfgJSON, nil, connections.QuerySpec{
 		RowLimit: 100,
@@ -52,7 +53,7 @@ func TestGraphQLExecutePropagatesGraphQLErrors(t *testing.T) {
 	defer srv.Close()
 
 	cfgJSON, _ := json.Marshal(GraphQLConfig{Endpoint: srv.URL})
-	g := NewGraphQL(Options{})
+	g := NewGraphQL(Options{Guardrails: config.DefaultGuardrailsConfig()})
 
 	_, err := g.Execute(context.Background(), cfgJSON, nil, connections.QuerySpec{
 		GraphQL: &connections.GraphQLSpec{Query: "query { bogus }"},
@@ -94,7 +95,7 @@ func TestGraphQLExecuteWithRelayPagination(t *testing.T) {
 	defer srv.Close()
 
 	cfgJSON, _ := json.Marshal(GraphQLConfig{Endpoint: srv.URL})
-	g := NewGraphQL(Options{})
+	g := NewGraphQL(Options{Guardrails: config.DefaultGuardrailsConfig()})
 
 	frame, err := g.Execute(context.Background(), cfgJSON, nil, connections.QuerySpec{
 		RowLimit: 100,

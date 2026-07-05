@@ -31,7 +31,9 @@ import (
 	"github.com/yesoreyeram/data-explorer/backend/internal/platform/dbx"
 	"github.com/yesoreyeram/data-explorer/backend/internal/platform/httpx"
 	"github.com/yesoreyeram/data-explorer/backend/internal/platform/logger"
+	"github.com/yesoreyeram/data-explorer/backend/internal/platform/memory"
 	"github.com/yesoreyeram/data-explorer/backend/internal/platform/migrator"
+	"github.com/yesoreyeram/data-explorer/backend/internal/quota"
 	"github.com/yesoreyeram/data-explorer/backend/internal/scheduler"
 	"github.com/yesoreyeram/data-explorer/backend/internal/workflow"
 	"github.com/yesoreyeram/data-explorer/backend/internal/workflow/nodes"
@@ -123,12 +125,17 @@ func run() error {
 	if err := connectors.RegisterAll(connectorRegistry, connectorTypes, connectors.Options{
 		DialContext:   baseGuard.DialContext,
 		StrictHeaders: true,
+		Guardrails:    cfg.Guardrails,
 	}); err != nil {
 		return fmt.Errorf("register connectors: %w", err)
 	}
 
 	connRepo := connections.NewRepository(pool)
-	connSvc := connections.NewService(connRepo, encryptor, connectorRegistry)
+	connSvc := connections.NewService(connRepo, encryptor, connectorRegistry, cfg.Guardrails)
+
+	pressure := memory.NewPressureMonitor(1024, 768)
+	go pressure.Start(ctx)
+	quotas := quota.NewService(cfg.Guardrails)
 
 	// The ad-hoc path dials arbitrary user-supplied targets; apply the
 	// stricter egress policy there when one is configured.
@@ -145,8 +152,8 @@ func run() error {
 
 	nodeRegistry := nodes.DefaultRegistry()
 	wfRepo := workflow.NewRepository(pool)
-	wfEngine := workflow.NewEngine(nodeRegistry)
-	wfSvc := workflow.NewService(wfRepo, wfEngine, connSvc)
+	wfEngine := workflow.NewEngine(nodeRegistry, cfg.Guardrails.MaxRows, cfg.Guardrails.NodeTimeout)
+	wfSvc := workflow.NewService(wfRepo, wfEngine, connSvc, cfg.Guardrails.RunTimeout, pressure)
 
 	catalogSvc := catalog.NewService()
 
@@ -170,9 +177,10 @@ func run() error {
 		authLimiter = custommw.NewIPRateLimiter(2, 10) // ~2 req/s, burst 10 - blunts credential stuffing
 	}
 
-	h := handlers.New(authSvc, authRepo, auditSvc, connSvc, wfSvc, catalogSvc, cfg.Env == "production", cfg.Auth.RefreshTokenTTL)
+	shutdownState := handlers.NewShutdownState()
+	h := handlers.New(authSvc, authRepo, auditSvc, connSvc, wfSvc, catalogSvc, metrics, quotas, cfg.Env == "production", cfg.Auth.RefreshTokenTTL)
 	h.OIDCPostLoginRedirect = cfg.OIDC.PostLoginRedirect
-	healthHandler := handlers.NewHealthHandler(pool)
+	healthHandler := handlers.NewHealthHandler(pool, wfSvc, shutdownState)
 
 	router := api.NewRouter(cfg, h, healthHandler, tokenManager, metrics, generalLimiter, authLimiter)
 
@@ -199,6 +207,7 @@ func run() error {
 	select {
 	case <-ctx.Done():
 		log.Info("shutdown signal received")
+		shutdownState.Begin(cfg.HTTP.ShutdownTimeout)
 	case err := <-serverErr:
 		return fmt.Errorf("http server error: %w", err)
 	}

@@ -233,14 +233,18 @@ export interface Workflow {
   scheduleLastRun?: string;
 }
 
-export type ExecutionStatus = "running" | "succeeded" | "failed";
+export type ExecutionStatus = "running" | "succeeded" | "failed" | "skipped";
 
 export interface NodeExecutionResult {
   nodeId: string;
   nodeType: string;
   nodeName: string;
   rowsOut: number;
+  rowCap?: number;
+  truncated?: boolean;
   durationMs: number;
+  timeoutMs?: number;
+  warnings?: string[];
   error?: string;
 }
 
@@ -268,6 +272,24 @@ export interface AuditLog {
   metadata?: Record<string, unknown>;
   outcome: "success" | "failure";
   createdAt: string;
+}
+
+
+export interface SearchResult {
+  type: string;
+  id?: string;
+  name: string;
+  href: string;
+}
+
+export interface GuardrailStat {
+  limitType: string;
+  count: number;
+}
+
+export interface GuardrailStatsResponse {
+  windowHours: number;
+  items: GuardrailStat[];
 }
 
 export interface ApiErrorBody {

@@ -3,7 +3,10 @@ package workflow
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/yesoreyeram/data-explorer/backend/internal/connections"
@@ -16,14 +19,24 @@ import (
 // protecting the server from a runaway pipeline (e.g. a huge join fan-out).
 const MaxExecutionDuration = 2 * time.Minute
 
+var ErrMemoryPressure = errors.New("workflow execution rejected due to memory pressure")
+
 type Service struct {
-	repo        *Repository
-	engine      *Engine
-	connections *connections.Service
+	repo             *Repository
+	engine           *Engine
+	connections      *connections.Service
+	runTimeout       time.Duration
+	pressure         interface{ IsUnderPressure() bool }
+	inFlight         atomic.Int64
+	activeMu         sync.Mutex
+	activeByWorkflow map[string]int
 }
 
-func NewService(repo *Repository, engine *Engine, connSvc *connections.Service) *Service {
-	return &Service{repo: repo, engine: engine, connections: connSvc}
+func NewService(repo *Repository, engine *Engine, connSvc *connections.Service, runTimeout time.Duration, pressure interface{ IsUnderPressure() bool }) *Service {
+	if runTimeout <= 0 {
+		runTimeout = MaxExecutionDuration
+	}
+	return &Service{repo: repo, engine: engine, connections: connSvc, runTimeout: runTimeout, pressure: pressure, activeByWorkflow: make(map[string]int)}
 }
 
 func (s *Service) Create(ctx context.Context, name, description string, definition json.RawMessage, createdBy string) (domain.Workflow, error) {
@@ -103,11 +116,28 @@ func (s *Service) GetExecution(ctx context.Context, id string) (domain.WorkflowE
 	return s.repo.GetExecution(ctx, id)
 }
 
+func (s *Service) InFlightRuns() int {
+	return int(s.inFlight.Load())
+}
+
+func (s *Service) IsWorkflowInFlight(workflowID string) bool {
+	s.activeMu.Lock()
+	defer s.activeMu.Unlock()
+	return s.activeByWorkflow[workflowID] > 0
+}
+
+func (s *Service) RecordSkippedSchedule(ctx context.Context, workflowID, reason string) error {
+	return s.repo.CreateSkippedExecution(ctx, workflowID, "scheduler", reason)
+}
+
 // Execute runs the workflow's current definition end-to-end and persists a
 // WorkflowExecution record (with per-node timing/row counts) regardless of
 // whether the run succeeds or fails, so the execution history always
 // reflects reality.
 func (s *Service) Execute(ctx context.Context, workflowID, triggeredBy string) (domain.WorkflowExecution, *dataframe.Frame, error) {
+	s.inFlight.Add(1)
+	defer s.inFlight.Add(-1)
+
 	wf, err := s.repo.Get(ctx, workflowID)
 	if err != nil {
 		return domain.WorkflowExecution{}, nil, err
@@ -121,12 +151,27 @@ func (s *Service) Execute(ctx context.Context, workflowID, triggeredBy string) (
 		return domain.WorkflowExecution{}, nil, fmt.Errorf("invalid workflow definition: %w", err)
 	}
 
+	if s.pressure != nil && s.pressure.IsUnderPressure() {
+		return domain.WorkflowExecution{}, nil, ErrMemoryPressure
+	}
+
 	execRecord, err := s.repo.CreateExecution(ctx, workflowID, triggeredBy)
 	if err != nil {
 		return domain.WorkflowExecution{}, nil, err
 	}
+	s.activeMu.Lock()
+	s.activeByWorkflow[workflowID]++
+	s.activeMu.Unlock()
+	defer func() {
+		s.activeMu.Lock()
+		s.activeByWorkflow[workflowID]--
+		if s.activeByWorkflow[workflowID] <= 0 {
+			delete(s.activeByWorkflow, workflowID)
+		}
+		s.activeMu.Unlock()
+	}()
 
-	runCtx, cancel := context.WithTimeout(ctx, MaxExecutionDuration)
+	runCtx, cancel := context.WithTimeout(ctx, s.runTimeout)
 	defer cancel()
 
 	start := time.Now()

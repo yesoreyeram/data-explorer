@@ -4,6 +4,7 @@ import type { ReactNode, SVGProps } from "react";
 // app has zero icon-library dependency. Add new icons here as needed rather
 // than pulling in an entire icon package for a handful of glyphs.
 type IconProps = SVGProps<SVGSVGElement>;
+type IconStarProps = IconProps & { filled?: boolean };
 
 function base(children: ReactNode, props: IconProps) {
   return (
@@ -147,5 +148,10 @@ export const IconSettings = (p: IconProps) =>
       <circle cx="8" cy="8" r="2.2" />
       <path d="M8 1.8v1.4M8 12.8v1.4M14.2 8h-1.4M3.2 8H1.8M12.3 3.7l-1 1M4.7 11.3l-1 1M12.3 12.3l-1-1M4.7 4.7l-1-1" />
     </>,
+    p,
+  );
+export const IconStar = ({ filled, ...p }: IconStarProps) =>
+  base(
+    <path d="M8 2.1l1.8 3.7 4.1.6-3 2.9.7 4.1L8 11.4l-3.6 2 0.7-4.1-3-2.9 4.1-.6L8 2.1z" fill={filled ? "currentColor" : "none"} />,
     p,
   );

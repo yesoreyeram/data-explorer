@@ -98,7 +98,8 @@ func (p *Postgres) Test(ctx context.Context, cfgJSON json.RawMessage, secret map
 
 func (p *Postgres) Execute(ctx context.Context, cfgJSON json.RawMessage, secret map[string]string, spec connections.QuerySpec) (*dataframe.Frame, error) {
 	start := time.Now()
-	if err := EnsureReadOnlySQL(spec.SQL); err != nil {
+	sqlText, err := projectedReadOnlySQL(spec.SQL, spec.ProjectionHint)
+	if err != nil {
 		return nil, err
 	}
 
@@ -117,7 +118,7 @@ func (p *Postgres) Execute(ctx context.Context, cfgJSON json.RawMessage, secret 
 		return nil, fmt.Errorf("set statement_timeout: %w", err)
 	}
 
-	rows, err := conn.Query(ctx, spec.SQL, spec.Params...)
+	rows, err := conn.Query(ctx, sqlText, spec.Params...)
 	if err != nil {
 		return nil, fmt.Errorf("query: %w", err)
 	}
