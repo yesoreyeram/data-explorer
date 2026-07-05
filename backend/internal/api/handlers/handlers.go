@@ -24,6 +24,9 @@ type Handlers struct {
 	Catalog        *catalog.Service
 	SecureCookies  bool
 	RefreshTTL     time.Duration
+	// OIDCPostLoginRedirect is where the browser is sent after a successful
+	// SSO callback. Empty defaults to "/".
+	OIDCPostLoginRedirect string
 }
 
 func New(authSvc *auth.Service, authRepo *auth.Repository, auditSvc *audit.Service, connSvc *connections.Service, wfSvc *workflow.Service, catalogSvc *catalog.Service, secureCookies bool, refreshTTL time.Duration) *Handlers {

@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -82,6 +83,20 @@ func run() error {
 	tokenManager := auth.NewTokenManager(cfg.Auth.JWTSigningKey, cfg.Auth.AccessTokenTTL)
 	authSvc := auth.NewService(authRepo, tokenManager, cfg.Auth.RefreshTokenTTL)
 
+	// Optional SSO: resolve each OIDC provider's discovery document at startup.
+	if cfg.OIDC.ProvidersJSON != "" {
+		var providers []auth.OIDCProviderConfig
+		if err := json.Unmarshal([]byte(cfg.OIDC.ProvidersJSON), &providers); err != nil {
+			return fmt.Errorf("parse OIDC_PROVIDERS: %w", err)
+		}
+		oidcMgr, err := auth.NewOIDCManager(ctx, providers)
+		if err != nil {
+			return fmt.Errorf("configure SSO: %w", err)
+		}
+		authSvc.SetOIDC(oidcMgr)
+		log.Info("single sign-on enabled", "providers", len(providers))
+	}
+
 	auditSvc := audit.NewService(pool, log)
 
 	// Build the SSRF egress guard and register every connector to dial through
@@ -156,6 +171,7 @@ func run() error {
 	}
 
 	h := handlers.New(authSvc, authRepo, auditSvc, connSvc, wfSvc, catalogSvc, cfg.Env == "production", cfg.Auth.RefreshTokenTTL)
+	h.OIDCPostLoginRedirect = cfg.OIDC.PostLoginRedirect
 	healthHandler := handlers.NewHealthHandler(pool)
 
 	router := api.NewRouter(cfg, h, healthHandler, tokenManager, metrics, generalLimiter, authLimiter)

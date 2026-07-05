@@ -20,6 +20,16 @@ type Config struct {
 	Log    LogConfig
 	Egress EgressConfig
 	Redis  RedisConfig
+	OIDC   OIDCConfig
+}
+
+// OIDCConfig holds the SSO providers, parsed from the OIDC_PROVIDERS env var
+// (a JSON array). Empty means single sign-on is disabled.
+type OIDCConfig struct {
+	ProvidersJSON string
+	// PostLoginRedirect is where the browser is sent after a successful SSO
+	// callback (the SPA then exchanges the refresh cookie for a session).
+	PostLoginRedirect string
 }
 
 // RedisConfig enables a shared, cross-instance rate limiter. When URL is empty
@@ -108,6 +118,10 @@ func Load() (*Config, error) {
 		},
 		Redis: RedisConfig{
 			URL: getEnv("REDIS_URL", ""),
+		},
+		OIDC: OIDCConfig{
+			ProvidersJSON:     getEnv("OIDC_PROVIDERS", ""),
+			PostLoginRedirect: getEnv("OIDC_POST_LOGIN_REDIRECT", "/"),
 		},
 	}
 

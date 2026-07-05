@@ -38,3 +38,14 @@ export async function me(): Promise<MeResponse> {
   const res = await api.get<MeResponse>("/auth/me");
   return res.data;
 }
+
+export interface AuthProvider {
+  name: string;
+  label: string;
+}
+
+/** Lists the configured SSO providers for the login page (empty if SSO is off). */
+export async function fetchAuthProviders(): Promise<AuthProvider[]> {
+  const res = await api.get<{ providers: AuthProvider[] | null }>("/auth/providers");
+  return res.data.providers ?? [];
+}

@@ -50,6 +50,9 @@ func NewRouter(cfg *config.Config, h *handlers.Handlers, health *handlers.Health
 			r.With(authRateLimit).Post("/refresh", h.Refresh)
 			r.Post("/logout", h.Logout)
 			r.With(custommw.RequireAuth).Get("/me", h.Me)
+			r.Get("/providers", h.ListAuthProviders)
+			r.With(authRateLimit).Get("/oidc/{provider}/start", h.StartOIDC)
+			r.With(authRateLimit).Get("/oidc/{provider}/callback", h.CallbackOIDC)
 		})
 
 		r.Route("/users", func(r chi.Router) {

@@ -29,6 +29,18 @@ a public issue.
   so the API doesn't leak which emails are registered.
 - New self-registered accounts get the **`viewer`** role only (least
   privilege by default); elevation is an explicit admin action.
+- **Single sign-on (OIDC)** can be enabled alongside local passwords
+  (`OIDC_PROVIDERS`). Login uses the Authorization Code + PKCE flow; the
+  server verifies each ID token statelessly against the provider's JWKS
+  (`internal/auth/oidc.go`) - no session store and no local signing key for
+  federated users. A **verified email is required** (`email_verified`), so a
+  provider that doesn't vouch for the address can't be used to hijack an
+  existing account by email; the CSRF `state` and PKCE verifier are held in
+  short-lived `SameSite=Lax` cookies across the redirect. First SSO login
+  provisions a **`viewer`** user (no password), matching self-registration.
+  Front multiple social providers (GitHub, Google, ...) with one federating
+  IdP so the server verifies a single standard token type. See
+  `docs/SECURITY.md` note above on least privilege.
 
 ## Authorization (RBAC)
 
@@ -328,7 +340,11 @@ Being upfront about what this is *not*, yet:
   `CONNECTION_ENCRYPTION_KEY` or `JWT_SIGNING_KEY` today requires a manual
   migration script and, for the JWT key, invalidates all outstanding
   sessions.
-- **No SSO/OIDC integration.** Authentication is local email+password only.
+- **SSO is OIDC-only and GitHub needs a broker.** Federated login supports
+  any standards-compliant OIDC provider (Google, Okta, Entra, Auth0, ...);
+  GitHub's OAuth doesn't issue OIDC ID tokens, so front it with a federating
+  IdP. SCIM provisioning / de-provisioning and group-to-role mapping are not
+  yet implemented - roles are still assigned in-app after first login.
 - **No per-column/row data masking.** Anyone with `connections:read` and
   access to a connection can see all columns/rows that connection's
   credentials expose, subject to the row limit.
