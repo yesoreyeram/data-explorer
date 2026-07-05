@@ -1,6 +1,15 @@
 # Data Explorer — Project Specification
 
-> **GitHub Spec Kit** — This document is the complete, self-contained specification for Data Explorer. It is intended to serve as the single source of truth for rebuilding the project from scratch. It covers all functional requirements, non-functional requirements, security model, observability, auditability, code quality standards, design principles, and UI guidelines.
+> **GitHub Spec Kit** — This repository follows [Spec-Driven Development](https://github.com/github/spec-kit) using the **Living Spec** model. The canonical spec-kit artifacts are:
+>
+> | Artifact | Location | Purpose |
+> |---|---|---|
+> | **Constitution** | [`.specify/memory/constitution.md`](../.specify/memory/constitution.md) | Governing principles, code quality rules, security mandates, architecture principles |
+> | **Spec** | [`specs/data-explorer/spec.md`](../specs/data-explorer/spec.md) | Product requirements, user stories, acceptance criteria, data model, API contract |
+> | **Plan** | [`specs/data-explorer/plan.md`](../specs/data-explorer/plan.md) | Technical implementation plan, architecture decisions, component design |
+> | **Tasks** | [`specs/data-explorer/tasks.md`](../specs/data-explorer/tasks.md) | Actionable implementation task list with definitions of done |
+>
+> This document (`docs/SPEC.md`) is a consolidated reference that combines all of the above into a single navigable document. When the spec-kit artifacts and this document diverge, the spec-kit artifacts take precedence.
 
 ---
 
