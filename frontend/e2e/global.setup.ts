@@ -12,12 +12,15 @@
 import { execSync } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
+import { fileURLToPath } from "url";
 
 import { expect, test as setup } from "@playwright/test";
 
 import { ADMIN_EMAIL, ADMIN_PASSWORD } from "./constants.ts";
 
 export { ADMIN_EMAIL, ADMIN_PASSWORD };
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const ADMIN_NAME = "E2E Admin";
 const BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:5173";
