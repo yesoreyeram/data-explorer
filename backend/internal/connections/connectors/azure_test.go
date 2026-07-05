@@ -6,7 +6,7 @@ import (
 )
 
 func TestAzureParseConfigLogAnalyticsRequiresWorkspaceID(t *testing.T) {
-	a := NewAzure()
+	a := NewAzure(Options{})
 	cfgJSON, _ := json.Marshal(AzureConfig{Service: "logAnalytics"})
 	if _, err := a.parseConfig(cfgJSON); err == nil {
 		t.Fatal("expected an error when workspaceId is missing")
@@ -14,7 +14,7 @@ func TestAzureParseConfigLogAnalyticsRequiresWorkspaceID(t *testing.T) {
 }
 
 func TestAzureParseConfigBlobStorageRequiresStorageAccount(t *testing.T) {
-	a := NewAzure()
+	a := NewAzure(Options{})
 	cfgJSON, _ := json.Marshal(AzureConfig{Service: "blobStorage"})
 	if _, err := a.parseConfig(cfgJSON); err == nil {
 		t.Fatal("expected an error when storageAccount is missing")
@@ -22,7 +22,7 @@ func TestAzureParseConfigBlobStorageRequiresStorageAccount(t *testing.T) {
 }
 
 func TestAzureParseConfigRejectsUnknownService(t *testing.T) {
-	a := NewAzure()
+	a := NewAzure(Options{})
 	cfgJSON, _ := json.Marshal(AzureConfig{Service: "cosmosdb"})
 	if _, err := a.parseConfig(cfgJSON); err == nil {
 		t.Fatal("expected an error for an unsupported service")
@@ -30,7 +30,7 @@ func TestAzureParseConfigRejectsUnknownService(t *testing.T) {
 }
 
 func TestAzureParseConfigAcceptsEachKnownService(t *testing.T) {
-	a := NewAzure()
+	a := NewAzure(Options{})
 	cases := []AzureConfig{
 		{Service: "logAnalytics", WorkspaceID: "ws-1"},
 		{Service: "blobStorage", StorageAccount: "acct1"},

@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -14,8 +15,10 @@ import (
 	"time"
 
 	"github.com/yesoreyeram/data-explorer/backend/db"
+	"github.com/yesoreyeram/data-explorer/backend/internal/adapters/ratelimit"
 	"github.com/yesoreyeram/data-explorer/backend/internal/api"
 	"github.com/yesoreyeram/data-explorer/backend/internal/api/handlers"
+	custommw "github.com/yesoreyeram/data-explorer/backend/internal/api/middleware"
 	"github.com/yesoreyeram/data-explorer/backend/internal/audit"
 	"github.com/yesoreyeram/data-explorer/backend/internal/auth"
 	"github.com/yesoreyeram/data-explorer/backend/internal/catalog"
@@ -26,6 +29,7 @@ import (
 	"github.com/yesoreyeram/data-explorer/backend/internal/observability"
 	"github.com/yesoreyeram/data-explorer/backend/internal/platform/crypto"
 	"github.com/yesoreyeram/data-explorer/backend/internal/platform/dbx"
+	"github.com/yesoreyeram/data-explorer/backend/internal/platform/httpx"
 	"github.com/yesoreyeram/data-explorer/backend/internal/platform/logger"
 	"github.com/yesoreyeram/data-explorer/backend/internal/platform/memory"
 	"github.com/yesoreyeram/data-explorer/backend/internal/platform/migrator"
@@ -33,6 +37,9 @@ import (
 	"github.com/yesoreyeram/data-explorer/backend/internal/scheduler"
 	"github.com/yesoreyeram/data-explorer/backend/internal/workflow"
 	"github.com/yesoreyeram/data-explorer/backend/internal/workflow/nodes"
+	"github.com/yesoreyeram/data-explorer/backend/pkg/egress"
+
+	"github.com/redis/go-redis/v9"
 )
 
 func main() {
@@ -50,6 +57,10 @@ func run() error {
 
 	log := logger.New(cfg.Log.Level, cfg.Log.Format)
 	log.Info("starting data-explorer", "env", cfg.Env, "addr", cfg.HTTP.Addr)
+
+	if err := httpx.ConfigureClientIP(cfg.HTTP.TrustedProxyMode); err != nil {
+		return fmt.Errorf("configure client IP resolution: %w", err)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -74,16 +85,50 @@ func run() error {
 	tokenManager := auth.NewTokenManager(cfg.Auth.JWTSigningKey, cfg.Auth.AccessTokenTTL)
 	authSvc := auth.NewService(authRepo, tokenManager, cfg.Auth.RefreshTokenTTL)
 
+	// Optional SSO: resolve each OIDC provider's discovery document at startup.
+	if cfg.OIDC.ProvidersJSON != "" {
+		var providers []auth.OIDCProviderConfig
+		if err := json.Unmarshal([]byte(cfg.OIDC.ProvidersJSON), &providers); err != nil {
+			return fmt.Errorf("parse OIDC_PROVIDERS: %w", err)
+		}
+		oidcMgr, err := auth.NewOIDCManager(ctx, providers)
+		if err != nil {
+			return fmt.Errorf("configure SSO: %w", err)
+		}
+		authSvc.SetOIDC(oidcMgr)
+		log.Info("single sign-on enabled", "providers", len(providers))
+	}
+
 	auditSvc := audit.NewService(pool, log)
 
+	// Build the SSRF egress guard and register every connector to dial through
+	// it. The default policy blocks cloud metadata and loopback while still
+	// permitting internal databases (see internal/config EgressConfig).
+	baseGuard, err := egress.New(egress.Config{
+		Mode:      egress.Mode(cfg.Egress.Policy),
+		Allowlist: cfg.Egress.Allowlist,
+	})
+	if err != nil {
+		return fmt.Errorf("configure egress guard: %w", err)
+	}
+
+	connectorTypes := []string{
+		string(domain.ConnectionTypePostgres),
+		string(domain.ConnectionTypeMySQL),
+		string(domain.ConnectionTypeREST),
+		string(domain.ConnectionTypeGraphQL),
+		string(domain.ConnectionTypeAWS),
+		string(domain.ConnectionTypeGCP),
+		string(domain.ConnectionTypeAzure),
+	}
 	connectorRegistry := connections.NewRegistry()
-	connectorRegistry.Register(string(domain.ConnectionTypePostgres), connectors.NewPostgres())
-	connectorRegistry.Register(string(domain.ConnectionTypeMySQL), connectors.NewMySQL())
-	connectorRegistry.Register(string(domain.ConnectionTypeREST), connectors.NewREST(cfg.Guardrails))
-	connectorRegistry.Register(string(domain.ConnectionTypeGraphQL), connectors.NewGraphQL(cfg.Guardrails))
-	connectorRegistry.Register(string(domain.ConnectionTypeAWS), connectors.NewAWS())
-	connectorRegistry.Register(string(domain.ConnectionTypeGCP), connectors.NewGCP())
-	connectorRegistry.Register(string(domain.ConnectionTypeAzure), connectors.NewAzure())
+	if err := connectors.RegisterAll(connectorRegistry, connectorTypes, connectors.Options{
+		DialContext:   baseGuard.DialContext,
+		StrictHeaders: true,
+		Guardrails:    cfg.Guardrails,
+	}); err != nil {
+		return fmt.Errorf("register connectors: %w", err)
+	}
 
 	connRepo := connections.NewRepository(pool)
 	connSvc := connections.NewService(connRepo, encryptor, connectorRegistry, cfg.Guardrails)
@@ -91,6 +136,19 @@ func run() error {
 	pressure := memory.NewPressureMonitor(1024, 768)
 	go pressure.Start(ctx)
 	quotas := quota.NewService(cfg.Guardrails)
+
+	// The ad-hoc path dials arbitrary user-supplied targets; apply the
+	// stricter egress policy there when one is configured.
+	if cfg.Egress.PolicyAdhoc != "" {
+		adhocGuard, err := egress.New(egress.Config{
+			Mode:      egress.Mode(cfg.Egress.PolicyAdhoc),
+			Allowlist: cfg.Egress.Allowlist,
+		})
+		if err != nil {
+			return fmt.Errorf("configure ad-hoc egress guard: %w", err)
+		}
+		connSvc.SetAdhocDialContext(adhocGuard.DialContext)
+	}
 
 	nodeRegistry := nodes.DefaultRegistry()
 	wfRepo := workflow.NewRepository(pool)
@@ -101,11 +159,30 @@ func run() error {
 
 	metrics := observability.NewMetrics()
 
+	// Rate limiters: shared (Redis) when REDIS_URL is set so a scaled
+	// deployment enforces one budget across instances, else in-process.
+	var generalLimiter, authLimiter custommw.Limiter
+	if cfg.Redis.URL != "" {
+		opt, err := redis.ParseURL(cfg.Redis.URL)
+		if err != nil {
+			return fmt.Errorf("parse REDIS_URL: %w", err)
+		}
+		rdb := redis.NewClient(opt)
+		defer rdb.Close()
+		generalLimiter = ratelimit.New(rdb, 20, 60, "rl:gen:", log)
+		authLimiter = ratelimit.New(rdb, 2, 10, "rl:auth:", log)
+		log.Info("using shared Redis rate limiter")
+	} else {
+		generalLimiter = custommw.NewIPRateLimiter(20, 60)
+		authLimiter = custommw.NewIPRateLimiter(2, 10) // ~2 req/s, burst 10 - blunts credential stuffing
+	}
+
 	shutdownState := handlers.NewShutdownState()
 	h := handlers.New(authSvc, authRepo, auditSvc, connSvc, wfSvc, catalogSvc, metrics, quotas, cfg.Env == "production", cfg.Auth.RefreshTokenTTL)
+	h.OIDCPostLoginRedirect = cfg.OIDC.PostLoginRedirect
 	healthHandler := handlers.NewHealthHandler(pool, wfSvc, shutdownState)
 
-	router := api.NewRouter(cfg, h, healthHandler, tokenManager, metrics)
+	router := api.NewRouter(cfg, h, healthHandler, tokenManager, metrics, generalLimiter, authLimiter)
 
 	srv := &http.Server{
 		Addr:              cfg.HTTP.Addr,

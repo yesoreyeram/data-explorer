@@ -7,7 +7,7 @@ import (
 )
 
 func TestGCPParseConfigRequiresProjectID(t *testing.T) {
-	g := NewGCP()
+	g := NewGCP(Options{})
 	cfgJSON, _ := json.Marshal(GCPConfig{Service: "bigquery"})
 	if _, err := g.parseConfig(cfgJSON); err == nil {
 		t.Fatal("expected an error when projectId is missing")
@@ -15,7 +15,7 @@ func TestGCPParseConfigRequiresProjectID(t *testing.T) {
 }
 
 func TestGCPParseConfigRejectsUnknownService(t *testing.T) {
-	g := NewGCP()
+	g := NewGCP(Options{})
 	cfgJSON, _ := json.Marshal(GCPConfig{ProjectID: "p1", Service: "spanner"})
 	if _, err := g.parseConfig(cfgJSON); err == nil {
 		t.Fatal("expected an error for an unsupported service")
@@ -23,7 +23,7 @@ func TestGCPParseConfigRejectsUnknownService(t *testing.T) {
 }
 
 func TestGCPParseConfigAcceptsEachKnownService(t *testing.T) {
-	g := NewGCP()
+	g := NewGCP(Options{})
 	for _, svc := range []string{"bigquery", "gcs"} {
 		cfgJSON, _ := json.Marshal(GCPConfig{ProjectID: "p1", Service: svc})
 		if _, err := g.parseConfig(cfgJSON); err != nil {

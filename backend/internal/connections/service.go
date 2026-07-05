@@ -20,11 +20,19 @@ type Service struct {
 	registry   *Registry
 	limiter    *perConnectionLimiter
 	guardrails config.GuardrailsConfig
+	// adhocDial, when set, is a stricter egress-guarded dialer applied only to
+	// the ad-hoc query path (which dials fully arbitrary, user-supplied
+	// targets). Saved connections use the connectors' base dialer.
+	adhocDial DialFunc
 }
 
 func NewService(repo *Repository, encryptor *crypto.Encryptor, registry *Registry, guardrails config.GuardrailsConfig) *Service {
 	return &Service{repo: repo, encryptor: encryptor, registry: registry, limiter: newPerConnectionLimiter(DefaultConnectionRateLimit, DefaultConnectionRateBurst), guardrails: guardrails}
 }
+
+// SetAdhocDialContext installs a per-call egress dialer for the ad-hoc query
+// path. Nil leaves the ad-hoc path on the connectors' base dialer.
+func (s *Service) SetAdhocDialContext(dial DialFunc) { s.adhocDial = dial }
 
 type CreateInput struct {
 	Name        string
@@ -149,6 +157,12 @@ func (s *Service) QueryAdhoc(ctx context.Context, actorID, connType string, conf
 	if err != nil {
 		return nil, err
 	}
+	// The ad-hoc path dials arbitrary user-supplied targets, so apply the
+	// stricter egress policy when one is configured.
+	if s.adhocDial != nil {
+		ctx = WithDialContext(ctx, s.adhocDial)
+	}
+
 	frame, err := connector.Execute(ctx, config, secret, spec)
 	if err != nil {
 		return nil, Classify(err)

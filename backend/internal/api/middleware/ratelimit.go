@@ -8,7 +8,16 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/yesoreyeram/data-explorer/backend/internal/platform/httpx"
+	"github.com/yesoreyeram/data-explorer/backend/internal/rbac"
 )
+
+// Limiter is a keyed rate limiter. It is implemented by the in-process
+// IPRateLimiter and by a shared Redis-backed limiter (see
+// internal/adapters/ratelimit), so a horizontally-scaled deployment can
+// enforce one budget across instances.
+type Limiter interface {
+	Allow(key string) bool
+}
 
 // IPRateLimiter is a simple in-memory, per-client-IP token bucket. It is
 // deliberately lightweight (no external dependency like Redis) since a
@@ -58,14 +67,32 @@ func (l *IPRateLimiter) cleanupLoop() {
 	}
 }
 
-func (l *IPRateLimiter) Middleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		key := httpx.ClientIP(r)
-		if !l.get(key).Allow() {
-			window := time.Duration(float64(time.Second) * float64(l.burst) / float64(l.r))
-			httpx.WriteRateLimit(w, l.burst, l.burst, window, time.Second, "Too many requests from this client. Retry after the indicated delay or reduce request frequency.")
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
+// Allow implements Limiter.
+func (l *IPRateLimiter) Allow(key string) bool { return l.get(key).Allow() }
+
+// RateLimit builds middleware that rejects a request when limiter.Allow returns
+// false for keyFn(r), responding 429 with rate-limit headers.
+func RateLimit(limiter Limiter, keyFn func(*http.Request) string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !limiter.Allow(keyFn(r)) {
+				httpx.WriteRateLimit(w, 0, 0, time.Second, time.Second, "Too many requests. Retry after the indicated delay or reduce request frequency.")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// KeyByIP keys a limiter on the resolved client IP.
+func KeyByIP(r *http.Request) string { return "ip:" + httpx.ClientIP(r) }
+
+// KeyByUserOrIP keys on the authenticated user when present - stronger than IP
+// because it survives NAT and can't be shed by rotating source addresses - and
+// falls back to the client IP for anonymous requests.
+func KeyByUserOrIP(r *http.Request) string {
+	if p, ok := rbac.FromContext(r.Context()); ok && p.UserID != "" {
+		return "user:" + p.UserID
+	}
+	return "ip:" + httpx.ClientIP(r)
 }

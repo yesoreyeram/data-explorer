@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -21,9 +22,13 @@ type PostgresConfig struct {
 	SSLMode  string `json:"sslMode"`
 }
 
-type Postgres struct{}
+type Postgres struct{ opts Options }
 
-func NewPostgres() *Postgres { return &Postgres{} }
+func NewPostgres(opts Options) *Postgres { return &Postgres{opts: opts} }
+
+var validPostgresSSLModes = map[string]struct{}{
+	"disable": {}, "allow": {}, "prefer": {}, "require": {}, "verify-ca": {}, "verify-full": {},
+}
 
 func (p *Postgres) dsn(cfgJSON json.RawMessage, secret map[string]string) (string, error) {
 	var cfg PostgresConfig
@@ -36,6 +41,20 @@ func (p *Postgres) dsn(cfgJSON json.RawMessage, secret map[string]string) (strin
 	if cfg.SSLMode == "" {
 		cfg.SSLMode = "prefer"
 	}
+	// DSN hygiene: reject values that could smuggle an alternate target past
+	// the egress guard (unix socket, multi-host DSN, an invalid sslmode).
+	if strings.TrimSpace(cfg.Host) == "" {
+		return "", connections.NewConfigError("Host is required.")
+	}
+	if strings.ContainsAny(cfg.Host, "/,@ ") {
+		return "", connections.NewConfigError("Host must be a single hostname or IP address.")
+	}
+	if cfg.Port < 1 || cfg.Port > 65535 {
+		return "", connections.NewConfigError("Port must be between 1 and 65535.")
+	}
+	if _, ok := validPostgresSSLModes[cfg.SSLMode]; !ok {
+		return "", connections.NewConfigError("SSL mode is not valid.")
+	}
 	password := secret["password"]
 	u := url.URL{
 		Scheme:   "postgres",
@@ -47,15 +66,28 @@ func (p *Postgres) dsn(cfgJSON json.RawMessage, secret map[string]string) (strin
 	return u.String(), nil
 }
 
-func (p *Postgres) Test(ctx context.Context, cfgJSON json.RawMessage, secret map[string]string) error {
+// connect builds a pgx connection whose dialer is the egress guard, so the
+// database host is validated and pinned at dial time.
+func (p *Postgres) connect(ctx context.Context, cfgJSON json.RawMessage, secret map[string]string) (*pgx.Conn, error) {
 	dsn, err := p.dsn(cfgJSON, secret)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	pcfg, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("parse connection config: %w", err)
+	}
+	if dial := p.opts.dial(ctx); dial != nil {
+		pcfg.DialFunc = dial
+	}
+	return pgx.ConnectConfig(ctx, pcfg)
+}
+
+func (p *Postgres) Test(ctx context.Context, cfgJSON json.RawMessage, secret map[string]string) error {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	conn, err := pgx.Connect(ctx, dsn)
+	conn, err := p.connect(ctx, cfgJSON, secret)
 	if err != nil {
 		return fmt.Errorf("connect: %w", err)
 	}
@@ -71,15 +103,10 @@ func (p *Postgres) Execute(ctx context.Context, cfgJSON json.RawMessage, secret 
 		return nil, err
 	}
 
-	dsn, err := p.dsn(cfgJSON, secret)
-	if err != nil {
-		return nil, err
-	}
-
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	conn, err := pgx.Connect(ctx, dsn)
+	conn, err := p.connect(ctx, cfgJSON, secret)
 	if err != nil {
 		return nil, fmt.Errorf("connect: %w", err)
 	}

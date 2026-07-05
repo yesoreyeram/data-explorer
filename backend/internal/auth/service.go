@@ -13,6 +13,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/yesoreyeram/data-explorer/backend/internal/domain"
@@ -31,14 +32,62 @@ type TokenPair struct {
 	RefreshTokenExpiresAt time.Time
 }
 
+var ErrOIDCDisabled = errors.New("single sign-on is not configured")
+var ErrEmailNotVerified = errors.New("the identity provider did not verify this email address")
+
 type Service struct {
 	repo            *Repository
 	tokens          *TokenManager
 	refreshTokenTTL time.Duration
+	oidc            *OIDCManager
 }
 
 func NewService(repo *Repository, tokens *TokenManager, refreshTokenTTL time.Duration) *Service {
 	return &Service{repo: repo, tokens: tokens, refreshTokenTTL: refreshTokenTTL}
+}
+
+// SetOIDC installs the OIDC manager (SSO providers). Nil leaves SSO off.
+func (s *Service) SetOIDC(m *OIDCManager) { s.oidc = m }
+
+// OIDC exposes the manager for the handler layer (auth-URL construction and
+// provider listing). Returns nil when SSO is not configured.
+func (s *Service) OIDC() *OIDCManager { return s.oidc }
+
+// LoginWithOIDC completes an OIDC callback: it exchanges and verifies the
+// authorization code, provisions or links the local user (first login gets the
+// least-privilege "viewer" role, matching self-registration), and issues a
+// session. It requires a verified email so a provider that doesn't vouch for
+// the address can't be used to hijack an existing account by email.
+func (s *Service) LoginWithOIDC(ctx context.Context, provider, code, codeVerifier, ip, userAgent string) (domain.User, TokenPair, error) {
+	if !s.oidc.Enabled() {
+		return domain.User{}, TokenPair{}, ErrOIDCDisabled
+	}
+	claims, err := s.oidc.Exchange(ctx, provider, code, codeVerifier)
+	if err != nil {
+		return domain.User{}, TokenPair{}, err
+	}
+	if claims.Email == "" || !claims.EmailVerified {
+		return domain.User{}, TokenPair{}, ErrEmailNotVerified
+	}
+	email := strings.TrimSpace(strings.ToLower(claims.Email))
+	displayName := claims.Name
+	if displayName == "" {
+		displayName = email
+	}
+
+	user, err := s.repo.UpsertFederatedUser(ctx, claims.Issuer, claims.Subject, email, displayName, []string{"viewer"})
+	if err != nil {
+		return domain.User{}, TokenPair{}, err
+	}
+	if user.Status == domain.UserStatusSuspended {
+		return domain.User{}, TokenPair{}, ErrAccountSuspended
+	}
+
+	pair, err := s.issueTokenPair(ctx, user, ip, userAgent)
+	if err != nil {
+		return domain.User{}, TokenPair{}, err
+	}
+	return user, pair, nil
 }
 
 // Register creates a new user and immediately issues a session. New

@@ -43,9 +43,18 @@ type GCPConfig struct {
 	ImpersonateServiceAccount string `json:"impersonateServiceAccount,omitempty"`
 }
 
-type GCP struct{}
+type GCP struct{ opts Options }
 
-func NewGCP() *GCP { return &GCP{} }
+func NewGCP(opts Options) *GCP { return &GCP{opts: opts} }
+
+// TODO(egress): route the GCP SDK's HTTP through the egress guard. Unlike AWS,
+// google.golang.org/api's option.WithHTTPClient disables the SDK's own
+// authentication, so this needs an auth-preserving transport built via
+// google.golang.org/api/transport/http.NewTransport (a separately testable
+// change). GCP service endpoints are fixed google hosts - the user controls
+// project/dataset/bucket, not the host - so this is defense-in-depth against
+// ambient-credential metadata resolution, not the user-exploitable hole the
+// HTTP/SQL connectors were.
 
 func (g *GCP) parseConfig(cfgJSON json.RawMessage) (GCPConfig, error) {
 	var cfg GCPConfig

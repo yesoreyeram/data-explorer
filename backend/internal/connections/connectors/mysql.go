@@ -5,12 +5,16 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net"
+	"strings"
+	"sync"
 	"time"
 
 	mysqldriver "github.com/go-sql-driver/mysql"
 
 	"github.com/yesoreyeram/data-explorer/backend/internal/connections"
 	"github.com/yesoreyeram/data-explorer/backend/pkg/dataframe"
+	"github.com/yesoreyeram/data-explorer/backend/pkg/httpclient"
 )
 
 type MySQLConfig struct {
@@ -20,9 +24,34 @@ type MySQLConfig struct {
 	User     string `json:"user"`
 }
 
-type MySQL struct{}
+type MySQL struct{ opts Options }
 
-func NewMySQL() *MySQL { return &MySQL{} }
+// The MySQL driver's dialer registry is process-global and keyed by a "net"
+// name, so the guarded dialer is registered once. Its closure resolves the
+// effective egress dialer from the request context (a per-call override for
+// the ad-hoc path) or the base guard captured at registration.
+const mysqlGuardedNet = "de-guarded-tcp"
+
+var (
+	mysqlRegisterOnce sync.Once
+	mysqlBaseDial     httpclient.DialFunc
+)
+
+func NewMySQL(opts Options) *MySQL {
+	if opts.DialContext != nil {
+		mysqlRegisterOnce.Do(func() {
+			mysqlBaseDial = opts.DialContext
+			mysqldriver.RegisterDialContext(mysqlGuardedNet, func(ctx context.Context, addr string) (net.Conn, error) {
+				dial := mysqlBaseDial
+				if override := connections.DialContextFrom(ctx); override != nil {
+					dial = override
+				}
+				return dial(ctx, "tcp", addr)
+			})
+		})
+	}
+	return &MySQL{opts: opts}
+}
 
 func (m *MySQL) dsn(cfgJSON json.RawMessage, secret map[string]string) (string, error) {
 	var cfg MySQLConfig
@@ -32,10 +61,22 @@ func (m *MySQL) dsn(cfgJSON json.RawMessage, secret map[string]string) (string, 
 	if cfg.Port == 0 {
 		cfg.Port = 3306
 	}
+	if strings.TrimSpace(cfg.Host) == "" {
+		return "", connections.NewConfigError("Host is required.")
+	}
+	if strings.ContainsAny(cfg.Host, "/,@ ") {
+		return "", connections.NewConfigError("Host must be a single hostname or IP address.")
+	}
+	if cfg.Port < 1 || cfg.Port > 65535 {
+		return "", connections.NewConfigError("Port must be between 1 and 65535.")
+	}
 	mysqlCfg := mysqldriver.NewConfig()
 	mysqlCfg.User = cfg.User
 	mysqlCfg.Passwd = secret["password"]
 	mysqlCfg.Net = "tcp"
+	if m.opts.DialContext != nil {
+		mysqlCfg.Net = mysqlGuardedNet
+	}
 	mysqlCfg.Addr = fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
 	mysqlCfg.DBName = cfg.Database
 	mysqlCfg.Timeout = 10 * time.Second

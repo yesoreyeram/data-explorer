@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yesoreyeram/data-explorer/backend/internal/config"
 	"github.com/yesoreyeram/data-explorer/backend/internal/connections"
 	"github.com/yesoreyeram/data-explorer/backend/internal/platform/safejson"
 	"github.com/yesoreyeram/data-explorer/backend/pkg/dataframe"
@@ -20,9 +19,9 @@ type GraphQLConfig struct {
 	AuthConfig
 }
 
-type GraphQL struct{ guardrails config.GuardrailsConfig }
+type GraphQL struct{ opts Options }
 
-func NewGraphQL(guardrails config.GuardrailsConfig) *GraphQL { return &GraphQL{guardrails: guardrails} }
+func NewGraphQL(opts Options) *GraphQL { return &GraphQL{opts: opts} }
 
 func (g *GraphQL) parseConfig(cfgJSON json.RawMessage) (GraphQLConfig, error) {
 	var cfg GraphQLConfig
@@ -43,11 +42,21 @@ func (g *GraphQL) parseConfig(cfgJSON json.RawMessage) (GraphQLConfig, error) {
 }
 
 func (g *GraphQL) client(ctx context.Context, cfg GraphQLConfig, secret map[string]string) (*httpclient.Client, error) {
-	auth, err := buildAuthenticator(ctx, cfg.AuthConfig, secret)
+	dial := g.opts.dial(ctx)
+	auth, err := buildAuthenticator(ctx, cfg.AuthConfig, secret, dial)
 	if err != nil {
 		return nil, fmt.Errorf("configure authentication: %w", err)
 	}
-	return httpclient.New(httpclient.Config{Timeout: g.guardrails.NodeTimeout, MaxResponseBytes: g.guardrails.MaxBodyBytes, MaxRedirects: g.guardrails.MaxRedirects, DecompressRatio: g.guardrails.DecompressRatio, Auth: auth, Retry: httpclient.DefaultRetryPolicy}), nil
+	return httpclient.New(httpclient.Config{
+		Timeout:          g.opts.Guardrails.NodeTimeout,
+		MaxResponseBytes: g.opts.Guardrails.MaxBodyBytes,
+		MaxRedirects:     g.opts.Guardrails.MaxRedirects,
+		DecompressRatio:  g.opts.Guardrails.DecompressRatio,
+		Auth:             auth,
+		Retry:            httpclient.DefaultRetryPolicy,
+		DialContext:      dial,
+		UserAgent:        g.opts.UserAgent,
+	}), nil
 }
 
 func (g *GraphQL) Test(ctx context.Context, cfgJSON json.RawMessage, secret map[string]string) error {
@@ -110,7 +119,7 @@ func (g *GraphQL) Execute(ctx context.Context, cfgJSON json.RawMessage, secret m
 	}
 	decodeBody := func(body []byte) (any, error) {
 		var decoded any
-		if err := safejson.Unmarshal(body, &decoded, g.guardrails.JSONMaxDepth, g.guardrails.JSONMaxElements); err != nil {
+		if err := safejson.Unmarshal(body, &decoded, g.opts.Guardrails.JSONMaxDepth, g.opts.Guardrails.JSONMaxElements); err != nil {
 			return nil, fmt.Errorf("response is not valid bounded JSON: %w", err)
 		}
 		return decoded, nil
@@ -120,7 +129,7 @@ func (g *GraphQL) Execute(ctx context.Context, cfgJSON json.RawMessage, secret m
 		if err != nil {
 			return nil, err
 		}
-		result, err := client.DoPaginated(ctx, req, paginator, maxPagesOf(spec.Pagination, g.guardrails.MaxPages))
+		result, err := client.DoPaginated(ctx, req, paginator, maxPagesOf(spec.Pagination, g.opts.Guardrails.MaxPages))
 		if err != nil {
 			return nil, fmt.Errorf("paginated request failed: %w", err)
 		}
@@ -132,7 +141,7 @@ func (g *GraphQL) Execute(ctx context.Context, cfgJSON json.RawMessage, secret m
 				return nil, fmt.Errorf("upstream returned status %d: %s", page.Response.StatusCode, truncateForError(page.Response.Body))
 			}
 			if page.Response.Truncated {
-				return nil, connections.NewGuardrailError(connections.ErrCodeInvalidConfig, "HTTP response body bytes", g.guardrails.MaxBodyBytes, int64(len(page.Response.Body))+1, "Reduce page size, add filters, or narrow the request.")
+				return nil, connections.NewGuardrailError(connections.ErrCodeInvalidConfig, "HTTP response body bytes", g.opts.Guardrails.MaxBodyBytes, int64(len(page.Response.Body))+1, "Reduce page size, add filters, or narrow the request.")
 			}
 			warnings = appendBodyCapWarning(warnings, len(page.Response.Body))
 			decoded, err := decodeBody(page.Response.Body)
@@ -155,7 +164,7 @@ func (g *GraphQL) Execute(ctx context.Context, cfgJSON json.RawMessage, secret m
 			return nil, fmt.Errorf("upstream returned status %d: %s", resp.StatusCode, truncateForError(resp.Body))
 		}
 		if resp.Truncated {
-			return nil, connections.NewGuardrailError(connections.ErrCodeInvalidConfig, "HTTP response body bytes", g.guardrails.MaxBodyBytes, int64(len(resp.Body))+1, "Reduce page size, add filters, or narrow the request.")
+			return nil, connections.NewGuardrailError(connections.ErrCodeInvalidConfig, "HTTP response body bytes", g.opts.Guardrails.MaxBodyBytes, int64(len(resp.Body))+1, "Reduce page size, add filters, or narrow the request.")
 		}
 		warnings = appendBodyCapWarning(warnings, len(resp.Body))
 		decoded, err := decodeBody(resp.Body)
@@ -166,7 +175,7 @@ func (g *GraphQL) Execute(ctx context.Context, cfgJSON json.RawMessage, secret m
 			return nil, err
 		}
 	}
-	frame.LimitColumns(g.guardrails.MaxColumns)
+	frame.LimitColumns(g.opts.Guardrails.MaxColumns)
 	frame.SetMeta(dataframe.Metadata{SourceType: "graphql", GeneratedAt: start, DurationMs: time.Since(start).Milliseconds(), Truncated: truncated || frame.Meta.Truncated, Warnings: warnings})
 	return frame, nil
 }

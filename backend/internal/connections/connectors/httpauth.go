@@ -3,9 +3,11 @@ package connectors
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/oauth2"
 
 	"github.com/yesoreyeram/data-explorer/backend/pkg/httpclient"
 )
@@ -68,7 +70,11 @@ type AuthConfig struct {
 // to a concrete httpclient.Authenticator. ctx is used only to build
 // long-lived token sources (OAuth2) that need a context for their internal
 // background refresh bookkeeping - it is not held past this call.
-func buildAuthenticator(ctx context.Context, cfg AuthConfig, secret map[string]string) (httpclient.Authenticator, error) {
+//
+// dial is the egress-guarded dialer; it is applied to the OAuth2 and
+// workload-identity token endpoints, which make their own outbound calls
+// separate from the main request client and would otherwise bypass the guard.
+func buildAuthenticator(ctx context.Context, cfg AuthConfig, secret map[string]string, dial httpclient.DialFunc) (httpclient.Authenticator, error) {
 	switch cfg.AuthType {
 	case "", "none":
 		return httpclient.NoAuth{}, nil
@@ -92,7 +98,7 @@ func buildAuthenticator(ctx context.Context, cfg AuthConfig, secret map[string]s
 		return httpclient.DigestAuth{Username: secret["username"], Password: secret["password"]}, nil
 
 	case "oauth2ClientCredentials":
-		return httpclient.NewOAuth2ClientCredentials(ctx, httpclient.OAuth2ClientCredentialsConfig{
+		return httpclient.NewOAuth2ClientCredentials(oauth2GuardedCtx(ctx, dial), httpclient.OAuth2ClientCredentialsConfig{
 			ClientID:       secret["oauth2ClientId"],
 			ClientSecret:   secret["oauth2ClientSecret"],
 			TokenURL:       cfg.OAuth2TokenURL,
@@ -101,7 +107,7 @@ func buildAuthenticator(ctx context.Context, cfg AuthConfig, secret map[string]s
 		}), nil
 
 	case "oauth2RefreshToken":
-		return httpclient.NewOAuth2RefreshToken(ctx, httpclient.OAuth2RefreshTokenConfig{
+		return httpclient.NewOAuth2RefreshToken(oauth2GuardedCtx(ctx, dial), httpclient.OAuth2RefreshTokenConfig{
 			ClientID:     secret["oauth2ClientId"],
 			ClientSecret: secret["oauth2ClientSecret"],
 			TokenURL:     cfg.OAuth2TokenURL,
@@ -136,6 +142,7 @@ func buildAuthenticator(ctx context.Context, cfg AuthConfig, secret map[string]s
 			Scope:         cfg.WorkloadIdentityScope,
 			ClientID:      secret["workloadIdentityClientId"],
 			ClientSecret:  secret["workloadIdentityClientSecret"],
+			HTTPClient:    guardedTokenClient(dial, 15*time.Second),
 		}), nil
 
 	case "kerberos":
@@ -151,6 +158,25 @@ func buildAuthenticator(ctx context.Context, cfg AuthConfig, secret map[string]s
 	default:
 		return nil, fmt.Errorf("unsupported authType %q", cfg.AuthType)
 	}
+}
+
+// oauth2GuardedCtx injects an egress-guarded HTTP client into ctx under the
+// oauth2.HTTPClient key so the token endpoint is dialed through the guard.
+// With a nil dial it returns ctx unchanged (default client).
+func oauth2GuardedCtx(ctx context.Context, dial httpclient.DialFunc) context.Context {
+	if dial == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, oauth2.HTTPClient, httpclient.GuardedHTTPClient(dial, 30*time.Second))
+}
+
+// guardedTokenClient builds an egress-guarded client for token endpoints that
+// don't take a context (workload identity). Nil dial yields a plain client.
+func guardedTokenClient(dial httpclient.DialFunc, timeout time.Duration) *http.Client {
+	if dial == nil {
+		return nil
+	}
+	return httpclient.GuardedHTTPClient(dial, timeout)
 }
 
 const defaultJWTTTL = 5 * time.Minute

@@ -54,7 +54,7 @@ func (r *Repository) CreateUser(ctx context.Context, email, displayName, passwor
 func (r *Repository) GetUserByEmail(ctx context.Context, email string) (domain.User, error) {
 	var u domain.User
 	err := r.db.QueryRow(ctx,
-		`SELECT id, email, display_name, password_hash, status, created_at, updated_at
+		`SELECT id, email, display_name, COALESCE(password_hash, ''), status, created_at, updated_at
 		 FROM users WHERE email = $1`, email,
 	).Scan(&u.ID, &u.Email, &u.DisplayName, &u.PasswordHash, &u.Status, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
@@ -181,6 +181,70 @@ func (r *Repository) SetUserRoles(ctx context.Context, userID string, roleIDs []
 		}
 	}
 	return tx.Commit(ctx)
+}
+
+// UpsertFederatedUser resolves the local user for an OIDC identity, creating
+// or linking as needed, and returns it. Resolution order:
+//  1. an existing federated_identities row for (issuer, subject) -> its user;
+//  2. an existing user with the same (verified) email -> link a new identity;
+//  3. otherwise create a new user (no password) with the given roles and link.
+//
+// New users are provisioned with roleNames (least privilege: "viewer").
+func (r *Repository) UpsertFederatedUser(ctx context.Context, issuer, subject, email, displayName string, roleNames []string) (domain.User, error) {
+	// 1. Existing linked identity.
+	var userID string
+	err := r.db.QueryRow(ctx,
+		`SELECT user_id FROM federated_identities WHERE issuer = $1 AND subject = $2`, issuer, subject,
+	).Scan(&userID)
+	if err == nil {
+		return r.GetUserByID(ctx, userID)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return domain.User{}, fmt.Errorf("lookup federated identity: %w", err)
+	}
+
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return domain.User{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	// 2. Link to an existing user with the same email, else 3. create one.
+	var u domain.User
+	err = tx.QueryRow(ctx,
+		`SELECT id, email, display_name, status, created_at, updated_at FROM users WHERE email = $1`, email,
+	).Scan(&u.ID, &u.Email, &u.DisplayName, &u.Status, &u.CreatedAt, &u.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		if err := tx.QueryRow(ctx,
+			`INSERT INTO users (email, display_name, password_hash) VALUES ($1, $2, NULL)
+			 RETURNING id, email, display_name, status, created_at, updated_at`,
+			email, displayName,
+		).Scan(&u.ID, &u.Email, &u.DisplayName, &u.Status, &u.CreatedAt, &u.UpdatedAt); err != nil {
+			return domain.User{}, fmt.Errorf("create federated user: %w", err)
+		}
+		if len(roleNames) > 0 {
+			if _, err := tx.Exec(ctx,
+				`INSERT INTO user_roles (user_id, role_id) SELECT $1, id FROM roles WHERE name = ANY($2)`,
+				u.ID, roleNames,
+			); err != nil {
+				return domain.User{}, fmt.Errorf("assign roles: %w", err)
+			}
+		}
+	} else if err != nil {
+		return domain.User{}, fmt.Errorf("lookup user by email: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO federated_identities (user_id, issuer, subject, email) VALUES ($1, $2, $3, $4)`,
+		u.ID, issuer, subject, email,
+	); err != nil {
+		return domain.User{}, fmt.Errorf("link federated identity: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return domain.User{}, err
+	}
+	return u, nil
 }
 
 // ---- Refresh tokens ----

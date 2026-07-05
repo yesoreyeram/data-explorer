@@ -1,7 +1,8 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 
-import { extractErrorMessage } from "../api/client";
+import { API_BASE_URL, extractErrorMessage } from "../api/client";
+import { fetchAuthProviders, type AuthProvider } from "../api/auth";
 import { useAuthStore } from "../state/authStore";
 import { Button, Card, CardBody, Field, Input } from "../components/ui";
 
@@ -14,6 +15,16 @@ export function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [providers, setProviders] = useState<AuthProvider[]>([]);
+
+  useEffect(() => {
+    fetchAuthProviders()
+      .then(setProviders)
+      .catch(() => setProviders([]));
+    if (new URLSearchParams(location.search).get("sso_error")) {
+      setError("Single sign-on failed. Please try again or use your email and password.");
+    }
+  }, [location.search]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -64,6 +75,27 @@ export function LoginPage() {
               {submitting ? "Signing in..." : "Sign in"}
             </Button>
           </form>
+
+          {providers.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <p className="field-hint" style={{ textAlign: "center", marginBottom: 8 }}>
+                or continue with
+              </p>
+              {providers.map((p) => (
+                <Button
+                  key={p.name}
+                  variant="default"
+                  type="button"
+                  style={{ width: "100%", marginTop: 8 }}
+                  onClick={() => {
+                    window.location.href = `${API_BASE_URL}/auth/oidc/${encodeURIComponent(p.name)}/start`;
+                  }}
+                >
+                  {p.label}
+                </Button>
+              ))}
+            </div>
+          )}
 
           <p className="field-hint" style={{ marginTop: 12, textAlign: "center" }}>
             No account? <Link to="/register">Create one</Link>

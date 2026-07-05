@@ -29,6 +29,18 @@ a public issue.
   so the API doesn't leak which emails are registered.
 - New self-registered accounts get the **`viewer`** role only (least
   privilege by default); elevation is an explicit admin action.
+- **Single sign-on (OIDC)** can be enabled alongside local passwords
+  (`OIDC_PROVIDERS`). Login uses the Authorization Code + PKCE flow; the
+  server verifies each ID token statelessly against the provider's JWKS
+  (`internal/auth/oidc.go`) - no session store and no local signing key for
+  federated users. A **verified email is required** (`email_verified`), so a
+  provider that doesn't vouch for the address can't be used to hijack an
+  existing account by email; the CSRF `state` and PKCE verifier are held in
+  short-lived `SameSite=Lax` cookies across the redirect. First SSO login
+  provisions a **`viewer`** user (no password), matching self-registration.
+  Front multiple social providers (GitHub, Google, ...) with one federating
+  IdP so the server verifies a single standard token type. See
+  `docs/SECURITY.md` note above on least privilege.
 
 ## Authorization (RBAC)
 
@@ -123,6 +135,42 @@ Operators who want to restrict this capability to a smaller group than
 "anyone with connections:test" should split `connections:test` into its own
 role rather than bundling it with broader connection-management
 permissions.
+
+## Outbound egress control (SSRF defense)
+
+Every connector dials a network target on a user's behalf, so a dial-time
+egress guard (`backend/pkg/egress`) is applied underneath all of them - HTTP
+via `pkg/httpclient`, Postgres via `pgconn.Config.DialFunc`, MySQL via the
+driver's registered dialer, and the OAuth2 / workload-identity token endpoints
+that make their own outbound calls. The guard resolves DNS itself, validates
+**every** returned IP against policy, and then dials only the validated literal
+IP - so a hostname that passes the check cannot be re-resolved to a different
+address between check and connect (a DNS-rebinding / TOCTOU defense), and a
+multi-record answer that mixes one disallowed IP in is rejected wholesale.
+
+- **The metadata endpoints and loopback are always denied**, in every policy
+  mode: link-local (`169.254.0.0/16`, `fe80::/10`, covering the AWS/GCP/Azure
+  metadata IP and the ECS credentials IP), the metadata hostnames
+  (`metadata.google.internal`, etc.), loopback, unspecified, multicast,
+  broadcast, NAT64, and their IPv4-mapped IPv6 forms (so `::ffff:169.254.169.254`
+  can't slip past the v4 rules). These are the SSRF "prizes" no connector ever
+  legitimately needs.
+- **Policy is configurable** via `EGRESS_POLICY`:
+  - `allow-private` (default) permits RFC1918/internal targets - so an
+    internal database keeps working - while still denying everything above.
+  - `allowlist` (`EGRESS_ALLOWLIST`) permits only named `host[:port]` patterns.
+  - `public-only` additionally denies all private ranges, for deployments that
+    only ever reach public APIs.
+- **The ad-hoc path can be locked down further.** `EGRESS_POLICY_ADHOC`
+  applies a stricter policy to temporary-connection queries (which dial fully
+  arbitrary, user-supplied targets) than to vetted saved connections.
+- **DSN hygiene** on the SQL connectors rejects a host that smuggles an
+  alternate target past the guard (a unix socket, a multi-host DSN, an invalid
+  `sslmode`), and the connectors dial from typed, validated components rather
+  than a pass-through connection string.
+- Because the guard is enforced at dial time, an absolute `path` on a REST
+  request that tries to override the vetted base URL's host is still caught -
+  the final resolved address is what hits the dialer.
 
 ## Outbound HTTP (REST/GraphQL connectors and `pkg/httpclient`)
 
@@ -261,7 +309,8 @@ might fail:
 | Auth endpoints | stricter per-IP rate limit (credential stuffing) | `api/middleware/ratelimit.go` |
 | All endpoints | general per-IP rate limit | `api/middleware/ratelimit.go` |
 | Per connection | per-connection-ID rate limit (protects the *downstream* system) | `connections.Service` |
-| SQL connectors | read-only statement guard, parameterized queries, statement timeout | `connectors/sqlguard.go`, `connectors/postgres.go` |
+| Every outbound dial | egress guard: metadata/loopback denied, DNS-rebinding-safe IP pinning, configurable policy | `pkg/egress` |
+| SQL connectors | read-only statement guard, parameterized queries, statement timeout, DSN hygiene | `connectors/sqlguard.go`, `connectors/postgres.go` |
 | REST/GraphQL connectors | response size cap, redirect cap, bounded jittered retry | `pkg/httpclient` |
 | Cloud query engines (Athena, CloudWatch Logs Insights) | bounded async poll wait (55s) | `connectors.AsyncQueryMaxWait` |
 | Cloud object storage (S3, GCS, Blob Storage) | object size cap (50MB) | `connectors.MaxObjectBytes` |
@@ -285,6 +334,16 @@ might fail:
   `/auth/login`, `/auth/register`, and `/auth/refresh` to blunt
   credential-stuffing and brute-force attempts
   (`internal/api/middleware/ratelimit.go`).
+- **Client IP is derived safely, not from a raw header.** The per-IP rate
+  limiter and the audit trail key on a client IP resolved by
+  `httpx.ConfigureClientIP`, which **ignores `X-Forwarded-For` by default**
+  (`TRUSTED_PROXY_MODE=none`) and uses the socket peer - so a client can't
+  spoof one header to evade the limiter or poison audit attribution. Behind a
+  trusted proxy, set `TRUSTED_PROXY_MODE=xff-depth:N` (for a fixed chain of N
+  proxies - the bundled nginx adds one, so `xff-depth:1`) or
+  `trusted-cidrs:<cidr,...>` (walk `X-Forwarded-For` right-to-left, skipping
+  trusted-proxy ranges, and take the first untrusted hop). The resolved value
+  is always a bare IP, so it is a stable rate-limit and audit key.
 - Request bodies are size-capped (1MB, `httpx.MaxRequestBodyBytes`) and
   decoded with `DisallowUnknownFields`; an oversized body fails fast with a
   clear `413 payload_too_large` rather than a confusing parse error from a
@@ -309,13 +368,22 @@ Being upfront about what this is *not*, yet:
   `CONNECTION_ENCRYPTION_KEY` or `JWT_SIGNING_KEY` today requires a manual
   migration script and, for the JWT key, invalidates all outstanding
   sessions.
-- **No SSO/OIDC integration.** Authentication is local email+password only.
+- **SSO is OIDC-only and GitHub needs a broker.** Federated login supports
+  any standards-compliant OIDC provider (Google, Okta, Entra, Auth0, ...);
+  GitHub's OAuth doesn't issue OIDC ID tokens, so front it with a federating
+  IdP. SCIM provisioning / de-provisioning and group-to-role mapping are not
+  yet implemented - roles are still assigned in-app after first login.
 - **No per-column/row data masking.** Anyone with `connections:read` and
   access to a connection can see all columns/rows that connection's
   credentials expose, subject to the row limit.
-- **Rate limiting is in-process and per-instance.** Behind a
-  horizontally-scaled deployment, front the API with a shared limiter (e.g.
-  at a load balancer/API gateway) in addition to the built-in one.
+- **API rate limiting can be shared across instances.** By default the
+  per-request limiter is in-process (per instance); set `REDIS_URL` to use a
+  shared Redis-backed token bucket so a horizontally-scaled deployment
+  enforces one budget across all instances. The general limiter keys on the
+  authenticated user (falling back to the client IP), which is harder to evade
+  than a pure per-IP limit; the auth endpoints stay IP-keyed since there's no
+  principal yet. On a Redis error the limiter fails open (logs and allows) so
+  a Redis outage degrades abuse control, not availability.
 - **The `EnsureReadOnlySQL` guard is a keyword/prefix check, not a full SQL
   parser.** It is a defense-in-depth layer, not the primary control - always
   use least-privilege, read-only database credentials for connections.
@@ -326,9 +394,12 @@ Being upfront about what this is *not*, yet:
   pure-Go Kerberos implementation) doesn't accept a context today. Operators
   using Kerberos should ensure their KDC is reliably reachable from the
   server.
-- **Per-connection rate limiting is in-memory and per-instance**, the same
-  caveat as the per-IP limiter above: a horizontally-scaled deployment needs
-  a shared limiter to enforce a single global budget per connection.
+- **Per-connection rate limiting is still in-memory and per-instance.** The
+  API-level limiter can be shared via `REDIS_URL` (above), but the
+  per-connection throttle inside `connections.Service` (which protects the
+  *downstream* system) is not yet shared; a horizontally-scaled deployment
+  needs a shared limiter there too to enforce a single global budget per
+  connection.
 - **Cloud connector least-privilege is the operator's responsibility, not
   enforced here.** Same principle as "use a read-only DB role" for
   Postgres/MySQL: the IAM role/service account/service principal behind an

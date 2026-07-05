@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yesoreyeram/data-explorer/backend/internal/config"
 	"github.com/yesoreyeram/data-explorer/backend/internal/connections"
 	"github.com/yesoreyeram/data-explorer/backend/internal/platform/safejson"
 	"github.com/yesoreyeram/data-explorer/backend/pkg/dataframe"
@@ -22,9 +21,9 @@ type RESTConfig struct {
 	AuthConfig
 }
 
-type REST struct{ guardrails config.GuardrailsConfig }
+type REST struct{ opts Options }
 
-func NewREST(guardrails config.GuardrailsConfig) *REST { return &REST{guardrails: guardrails} }
+func NewREST(opts Options) *REST { return &REST{opts: opts} }
 
 func (r *REST) parseConfig(cfgJSON json.RawMessage) (RESTConfig, error) {
 	var cfg RESTConfig
@@ -45,11 +44,21 @@ func (r *REST) parseConfig(cfgJSON json.RawMessage) (RESTConfig, error) {
 }
 
 func (r *REST) client(ctx context.Context, cfg RESTConfig, secret map[string]string) (*httpclient.Client, error) {
-	auth, err := buildAuthenticator(ctx, cfg.AuthConfig, secret)
+	dial := r.opts.dial(ctx)
+	auth, err := buildAuthenticator(ctx, cfg.AuthConfig, secret, dial)
 	if err != nil {
 		return nil, fmt.Errorf("configure authentication: %w", err)
 	}
-	return httpclient.New(httpclient.Config{Timeout: r.guardrails.NodeTimeout, MaxResponseBytes: r.guardrails.MaxBodyBytes, MaxRedirects: r.guardrails.MaxRedirects, DecompressRatio: r.guardrails.DecompressRatio, Auth: auth, Retry: httpclient.DefaultRetryPolicy}), nil
+	return httpclient.New(httpclient.Config{
+		Timeout:          r.opts.Guardrails.NodeTimeout,
+		MaxResponseBytes: r.opts.Guardrails.MaxBodyBytes,
+		MaxRedirects:     r.opts.Guardrails.MaxRedirects,
+		DecompressRatio:  r.opts.Guardrails.DecompressRatio,
+		Auth:             auth,
+		Retry:            httpclient.DefaultRetryPolicy,
+		DialContext:      dial,
+		UserAgent:        r.opts.UserAgent,
+	}), nil
 }
 
 func (r *REST) buildRequest(ctx context.Context, cfg RESTConfig, spec connections.QuerySpec) (*http.Request, error) {
@@ -85,9 +94,45 @@ func (r *REST) buildRequest(ctx context.Context, cfg RESTConfig, spec connection
 	}
 	req.Header.Set("Accept", "application/json")
 	for k, v := range spec.Headers {
+		if r.opts.StrictHeaders {
+			if err := validateOutboundHeader(k); err != nil {
+				return nil, err
+			}
+		}
 		req.Header.Set(k, v)
 	}
 	return req, nil
+}
+
+// reservedHeaders are hop-by-hop or transport-controlled headers a caller must
+// not be able to set on an outbound request built by the relay.
+var reservedHeaders = map[string]struct{}{
+	"host":              {},
+	"connection":        {},
+	"content-length":    {},
+	"transfer-encoding": {},
+	"keep-alive":        {},
+	"proxy-connection":  {},
+	"upgrade":           {},
+	"te":                {},
+	"trailer":           {},
+}
+
+func validateOutboundHeader(name string) error {
+	if name == "" {
+		return connections.NewConfigError("Header name must not be empty.")
+	}
+	// RFC 7230 token: no separators or control characters.
+	for _, c := range name {
+		if c <= ' ' || c >= 0x7f || strings.ContainsRune("()<>@,;:\\\"/[]?={}", c) {
+			return connections.NewConfigError(fmt.Sprintf("Header name %q contains invalid characters.", name))
+		}
+	}
+	lower := strings.ToLower(name)
+	if _, bad := reservedHeaders[lower]; bad || strings.HasPrefix(lower, "x-forwarded-") || strings.HasPrefix(lower, "proxy-") {
+		return connections.NewConfigError(fmt.Sprintf("Header %q may not be set.", name))
+	}
+	return nil
 }
 
 func (r *REST) Test(ctx context.Context, cfgJSON json.RawMessage, secret map[string]string) error {
@@ -146,7 +191,7 @@ func (r *REST) Execute(ctx context.Context, cfgJSON json.RawMessage, secret map[
 		if len(body) == 0 {
 			return nil, nil
 		}
-		if err := safejson.Unmarshal(body, &decoded, r.guardrails.JSONMaxDepth, r.guardrails.JSONMaxElements); err != nil {
+		if err := safejson.Unmarshal(body, &decoded, r.opts.Guardrails.JSONMaxDepth, r.opts.Guardrails.JSONMaxElements); err != nil {
 			return nil, fmt.Errorf("response is not valid bounded JSON: %w", err)
 		}
 		return decoded, nil
@@ -156,7 +201,7 @@ func (r *REST) Execute(ctx context.Context, cfgJSON json.RawMessage, secret map[
 		if err != nil {
 			return nil, err
 		}
-		result, err := client.DoPaginated(ctx, req, paginator, maxPagesOf(spec.Pagination, r.guardrails.MaxPages))
+		result, err := client.DoPaginated(ctx, req, paginator, maxPagesOf(spec.Pagination, r.opts.Guardrails.MaxPages))
 		if err != nil {
 			return nil, fmt.Errorf("paginated request failed: %w", err)
 		}
@@ -168,7 +213,7 @@ func (r *REST) Execute(ctx context.Context, cfgJSON json.RawMessage, secret map[
 				return nil, fmt.Errorf("upstream returned status %d: %s", page.Response.StatusCode, truncateForError(page.Response.Body))
 			}
 			if page.Response.Truncated {
-				return nil, connections.NewGuardrailError(connections.ErrCodeInvalidConfig, "HTTP response body bytes", r.guardrails.MaxBodyBytes, int64(len(page.Response.Body))+1, "Reduce page size, add filters, or narrow the request.")
+				return nil, connections.NewGuardrailError(connections.ErrCodeInvalidConfig, "HTTP response body bytes", r.opts.Guardrails.MaxBodyBytes, int64(len(page.Response.Body))+1, "Reduce page size, add filters, or narrow the request.")
 			}
 			warnings = appendBodyCapWarning(warnings, len(page.Response.Body))
 			decoded, err := decodeBody(page.Response.Body)
@@ -189,7 +234,7 @@ func (r *REST) Execute(ctx context.Context, cfgJSON json.RawMessage, secret map[
 			return nil, fmt.Errorf("upstream returned status %d: %s", resp.StatusCode, truncateForError(resp.Body))
 		}
 		if resp.Truncated {
-			return nil, connections.NewGuardrailError(connections.ErrCodeInvalidConfig, "HTTP response body bytes", r.guardrails.MaxBodyBytes, int64(len(resp.Body))+1, "Reduce page size, add filters, or narrow the request.")
+			return nil, connections.NewGuardrailError(connections.ErrCodeInvalidConfig, "HTTP response body bytes", r.opts.Guardrails.MaxBodyBytes, int64(len(resp.Body))+1, "Reduce page size, add filters, or narrow the request.")
 		}
 		warnings = appendBodyCapWarning(warnings, len(resp.Body))
 		decoded, err := decodeBody(resp.Body)
@@ -198,7 +243,7 @@ func (r *REST) Execute(ctx context.Context, cfgJSON json.RawMessage, secret map[
 		}
 		appendPage(decoded, "")
 	}
-	frame.LimitColumns(r.guardrails.MaxColumns)
+	frame.LimitColumns(r.opts.Guardrails.MaxColumns)
 	frame.SetMeta(dataframe.Metadata{SourceType: "rest", GeneratedAt: start, DurationMs: time.Since(start).Milliseconds(), Truncated: truncated || frame.Meta.Truncated, Warnings: warnings})
 	return frame, nil
 }

@@ -40,9 +40,17 @@ type AzureConfig struct {
 	StorageAccount string `json:"storageAccount,omitempty"`
 }
 
-type Azure struct{}
+type Azure struct{ opts Options }
 
-func NewAzure() *Azure { return &Azure{} }
+func NewAzure(opts Options) *Azure { return &Azure{opts: opts} }
+
+// TODO(egress): route the Azure SDK's HTTP through the egress guard by setting
+// azcore.ClientOptions{Transport: guarded} on both azureCredential and each
+// service client (azure_blobstorage.go, azure_loganalytics.go). Azure service
+// endpoints are fixed provider hosts - the user controls
+// workspace/account/query, not the host - so this is defense-in-depth against
+// ambient-credential (managed identity / IMDS) resolution, not the
+// user-exploitable hole the HTTP/SQL connectors were.
 
 func (a *Azure) parseConfig(cfgJSON json.RawMessage) (AzureConfig, error) {
 	var cfg AzureConfig

@@ -18,6 +18,39 @@ type Config struct {
 	Auth       AuthConfig
 	Log        LogConfig
 	Guardrails GuardrailsConfig
+	Egress     EgressConfig
+	Redis      RedisConfig
+	OIDC       OIDCConfig
+}
+
+// OIDCConfig holds the SSO providers, parsed from the OIDC_PROVIDERS env var
+// (a JSON array). Empty means single sign-on is disabled.
+type OIDCConfig struct {
+	ProvidersJSON string
+	// PostLoginRedirect is where the browser is sent after a successful SSO
+	// callback (the SPA then exchanges the refresh cookie for a session).
+	PostLoginRedirect string
+}
+
+// RedisConfig enables a shared, cross-instance rate limiter. When URL is empty
+// the app uses in-process per-instance limiters instead.
+type RedisConfig struct {
+	URL string
+}
+
+// EgressConfig controls the SSRF egress guard applied to every outbound
+// connector dial. See pkg/egress for the policy semantics.
+type EgressConfig struct {
+	// Policy: allow-private (default) | allowlist | public-only. The default
+	// permits internal databases but always blocks cloud metadata and
+	// loopback - the targets no connector legitimately needs.
+	Policy string
+	// Allowlist holds host[:port] patterns for the allowlist policy.
+	Allowlist []string
+	// PolicyAdhoc optionally applies a stricter policy to the ad-hoc query
+	// path (temporary connections dial fully arbitrary targets). Empty means
+	// "same as Policy".
+	PolicyAdhoc string
 }
 
 type HTTPConfig struct {
@@ -25,6 +58,10 @@ type HTTPConfig struct {
 	AllowedOrigins  []string
 	ShutdownTimeout time.Duration
 	RequestTimeout  time.Duration
+	// TrustedProxyMode controls how the client IP is derived for rate limiting
+	// and audit: "none" (default, socket peer only), "xff-depth:N", or
+	// "trusted-cidrs:cidr,...". See httpx.ConfigureClientIP.
+	TrustedProxyMode string
 }
 
 type DBConfig struct {
@@ -93,10 +130,11 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		Env: getEnv("APP_ENV", "development"),
 		HTTP: HTTPConfig{
-			Addr:            getEnv("HTTP_ADDR", ":8080"),
-			AllowedOrigins:  splitCSV(getEnv("HTTP_ALLOWED_ORIGINS", "http://localhost:5173")),
-			ShutdownTimeout: getDuration("HTTP_SHUTDOWN_TIMEOUT", 15*time.Second),
-			RequestTimeout:  getDuration("HTTP_REQUEST_TIMEOUT", 30*time.Second),
+			Addr:             getEnv("HTTP_ADDR", ":8080"),
+			AllowedOrigins:   splitCSV(getEnv("HTTP_ALLOWED_ORIGINS", "http://localhost:5173")),
+			ShutdownTimeout:  getDuration("HTTP_SHUTDOWN_TIMEOUT", 15*time.Second),
+			RequestTimeout:   getDuration("HTTP_REQUEST_TIMEOUT", 30*time.Second),
+			TrustedProxyMode: getEnv("TRUSTED_PROXY_MODE", "none"),
 		},
 		DB: DBConfig{
 			DSN:             getEnv("DATABASE_URL", "******localhost:5432/data_explorer?sslmode=disable"),
@@ -115,6 +153,18 @@ func Load() (*Config, error) {
 			Format: getEnv("LOG_FORMAT", "json"),
 		},
 		Guardrails: DefaultGuardrailsConfig(),
+		Egress: EgressConfig{
+			Policy:      getEnv("EGRESS_POLICY", "allow-private"),
+			Allowlist:   splitCSV(getEnv("EGRESS_ALLOWLIST", "")),
+			PolicyAdhoc: getEnv("EGRESS_POLICY_ADHOC", ""),
+		},
+		Redis: RedisConfig{
+			URL: getEnv("REDIS_URL", ""),
+		},
+		OIDC: OIDCConfig{
+			ProvidersJSON:     getEnv("OIDC_PROVIDERS", ""),
+			PostLoginRedirect: getEnv("OIDC_POST_LOGIN_REDIRECT", "/"),
+		},
 	}
 	if path := strings.TrimSpace(os.Getenv("GUARDRAILS_CONFIG_FILE")); path != "" {
 		if err := cfg.loadGuardrailsFile(path); err != nil {
@@ -212,8 +262,29 @@ func (c *Config) validate() error {
 	if c.Auth.EncryptionKeyBase64 == "" {
 		c.Auth.EncryptionKeyBase64 = "ZGV2LW9ubHktaW5zZWN1cmUtMzJieXRlLWtleSEhISE="
 	}
+	if err := validateEgressPolicy(c.Egress.Policy, c.Egress.Allowlist); err != nil {
+		return err
+	}
+	if c.Egress.PolicyAdhoc != "" {
+		if err := validateEgressPolicy(c.Egress.PolicyAdhoc, c.Egress.Allowlist); err != nil {
+			return err
+		}
+	}
 	if c.Guardrails.MaxBodyBytes <= 0 || c.Guardrails.MaxRows <= 0 || c.Guardrails.MaxColumns <= 0 {
 		return fmt.Errorf("guardrail limits must be positive")
+	}
+	return nil
+}
+
+func validateEgressPolicy(policy string, allowlist []string) error {
+	switch policy {
+	case "allow-private", "public-only":
+	case "allowlist":
+		if len(allowlist) == 0 {
+			return fmt.Errorf("EGRESS_ALLOWLIST must be set when the egress policy is 'allowlist'")
+		}
+	default:
+		return fmt.Errorf("egress policy %q is not valid (allow-private | allowlist | public-only)", policy)
 	}
 	return nil
 }
