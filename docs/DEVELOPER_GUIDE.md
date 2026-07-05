@@ -65,7 +65,39 @@ npm run lint
 npm run build
 ```
 
-Guardrail UI conventions:
+### 4. End-to-end tests (Playwright)
+
+E2E tests live in `frontend/e2e/` and run against the full stack (Go backend +
+Vite dev server). Before running them, make sure both the backend (step 2) and
+the frontend dev server (step 3) are running, then:
+
+```bash
+cd frontend
+npm run test:e2e          # headless Chromium
+npm run test:e2e:ui       # interactive Playwright UI
+npm run test:e2e:report   # view the last HTML report
+```
+
+**Global setup** (`e2e/global.setup.ts`) registers a test admin user
+(`e2e-admin@test.local` by default) via the API, elevates them to the `admin`
+role (requires `psql` and `DATABASE_URL`), and saves the browser session to
+`e2e/.auth/admin.json` (gitignored). Subsequent tests reuse this session.
+
+Override the defaults with environment variables:
+
+| Variable | Default | Notes |
+|---|---|---|
+| `E2E_ADMIN_EMAIL` | `e2e-admin@test.local` | Test admin email |
+| `E2E_ADMIN_PASSWORD` | `e2e-test-password-secure123` | Test admin password |
+| `DATABASE_URL` | — | Used by `psql` to promote the user to admin |
+| `PLAYWRIGHT_BASE_URL` | `http://localhost:5173` | Frontend origin |
+
+**PR requirement**: every PR that adds or changes any visible UI must include a
+Playwright spec covering the critical happy path, capture screenshots of every
+changed screen, and commit them to `docs/screenshots/` (see the screenshots
+section in [`../.github/copilot-instructions.md`](../.github/copilot-instructions.md)).
+
+
 
 - Render `DataFrame.meta.warnings` as user-visible soft warnings without
   treating them as failed operations.
@@ -81,7 +113,7 @@ Guardrail UI conventions:
   `savedChartsStore` for quick visualizations before introducing a new
   dashboard-specific chart flow.
 
-### 4. First login
+### 5. First login
 
 Register a user through the UI (or `POST /api/v1/auth/register`). New
 accounts start as `viewer`. Promote yourself to `admin` directly in the

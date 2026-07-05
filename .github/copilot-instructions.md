@@ -60,9 +60,12 @@ cd frontend && npm ci
 cd frontend && npx tsc -b
 cd frontend && npm run lint       # Oxlint
 cd frontend && npm run build      # Vite production build
+
+# E2E (requires backend on :8080 and frontend dev server on :5173)
+cd frontend && npm run test:e2e
 ```
 
-CI runs both jobs on every push/PR (`.github/workflows/ci.yml`).
+CI runs all three jobs (`backend`, `frontend`, `e2e`) on every push/PR (`.github/workflows/ci.yml`).
 
 ## Code style and conventions
 
@@ -88,6 +91,15 @@ CI runs both jobs on every push/PR (`.github/workflows/ci.yml`).
 3. Every new mutating endpoint must be gated by a single RBAC permission at the router.
 4. Every mutating action and sensitive read must emit an audit log entry.
 5. Run `go vet ./...` and `npx tsc -b` before committing. Zero warnings/errors required.
+
+## E2E testing requirement (mandatory for all UI PRs)
+
+Every PR that adds or changes any visible UI must include end-to-end tests:
+
+1. **Add a Playwright spec** in `frontend/e2e/` covering every new or changed page. The spec must test the critical happy path and at least one error path.
+2. Prefer locators by ARIA role/label (`.getByRole`, `.getByLabel`) over CSS selectors.
+3. Each test must clean up any data it creates.
+4. Run `npm run test:e2e` locally before opening a PR; all tests must pass.
 
 ## Screenshots requirement (mandatory for all PRs)
 

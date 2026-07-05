@@ -54,3 +54,82 @@ jobs:
       - run: npm run lint
       - run: npm run build
       - run: npm run build-storybook
+
+  e2e:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: data_explorer
+          POSTGRES_PASSWORD: data_explorer
+          POSTGRES_DB: data_explorer
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U data_explorer"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      # -- Backend -----------------------------------------------------------
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Build backend binary
+        run: go build -o /tmp/data-explorer-server ./cmd/server
+        working-directory: backend
+      - name: Start backend
+        run: /tmp/data-explorer-server &
+        env:
+          DATABASE_URL: postgres://data_explorer:data_explorer@localhost:5432/data_explorer?sslmode=disable
+          HTTP_ADDR: ":8080"
+          APP_ENV: development
+
+      # -- Frontend ----------------------------------------------------------
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: frontend
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+        working-directory: frontend
+
+      # -- Wait for backend --------------------------------------------------
+      - name: Wait for backend to be ready
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8080/healthz && break || sleep 2
+          done
+
+      # -- E2E ---------------------------------------------------------------
+      - name: Run E2E tests
+        run: npm run test:e2e
+        working-directory: frontend
+        env:
+          DATABASE_URL: postgres://data_explorer:data_explorer@localhost:5432/data_explorer?sslmode=disable
+          PLAYWRIGHT_BASE_URL: http://localhost:5173
+          CI: "true"
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend/playwright-report/
+          retention-days: 14
+
+      - name: Upload Playwright test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-test-results
+          path: frontend/test-results/
+          retention-days: 14
