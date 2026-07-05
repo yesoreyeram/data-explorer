@@ -62,11 +62,73 @@ behaviour is covered by an appropriate test — unit, integration, or end-to-end
 
 ### End-to-end (Playwright)
 
-- Playwright tests live in `frontend/e2e/`.
-- Cover critical paths: login, creating a connection, running a query, building
-  and executing a workflow, viewing audit log.
-- Every test that interacts with a new UI page must also verify CSV/JSON export
-  if the page renders a data table.
+Tests live in `frontend/e2e/` and run with `npm run test:e2e` from the `frontend/` directory.
+
+#### Structure
+
+```
+frontend/e2e/
+  global.setup.ts          # registers + promotes admin test user, saves auth state
+  .auth/admin.json         # saved browser session (gitignored)
+  auth.spec.ts             # login, register, redirect, invalid-credentials
+  dashboard.spec.ts        # stat grid, navigation links
+  connections.spec.ts      # list, create, delete connections
+  explore.spec.ts          # mode toggle, connection selector, run button
+  workflows.spec.ts        # create workflow, open builder, delete
+  audit-log.spec.ts        # table headers, filter inputs, pagination
+```
+
+#### Global setup
+
+`global.setup.ts` is executed once before all tests. It:
+1. Registers a test admin user via `POST /api/v1/auth/register`.
+2. Promotes the user to the `admin` role by executing a SQL statement against
+   the PostgreSQL database (requires `psql` and `DATABASE_URL` to be set in
+   the environment; in local dev without `DATABASE_URL` the user remains a
+   viewer and write-gated tests are skipped gracefully).
+3. Logs in and saves the browser storage state to `e2e/.auth/admin.json` for
+   reuse by all subsequent tests.
+
+Environment variables consumed:
+- `E2E_ADMIN_EMAIL` (default: `e2e-admin@test.local`)
+- `E2E_ADMIN_PASSWORD` (default: `e2e-test-password-secure123`)
+- `DATABASE_URL` — if set, used to elevate the test user to admin.
+- `PLAYWRIGHT_BASE_URL` (default: `http://localhost:5173`)
+
+#### Running locally
+
+1. Start the backend: `cd backend && go run ./cmd/server`
+2. In a second terminal: `cd frontend && npm run dev`
+3. In a third terminal: `cd frontend && npm run test:e2e`
+
+Or with the interactive UI: `npm run test:e2e:ui`
+
+#### Adding a new E2E test
+
+- Every PR that introduces a new page or a significant new flow **must** include
+  a Playwright spec in `frontend/e2e/` covering the critical happy path and at
+  least one error path.
+- Prefer locators by ARIA role or label (`.getByRole`, `.getByLabel`) over CSS
+  class selectors.
+- Keep tests independent: each `test` block should set up and clean up its own
+  data. Don't rely on ordering between test files.
+- If a test interacts with a data table that supports CSV/JSON export, assert the
+  export button is present and enabled.
+- After writing the spec, capture screenshots of each covered screen with
+  Playwright and commit them to `docs/screenshots/` (see PR screenshot
+  requirement below).
+
+#### PR screenshot requirement (mandatory)
+
+Every PR that adds or changes any visible UI **must**:
+1. Capture screenshots of every new or changed screen using Playwright. Store
+   PNGs in `docs/screenshots/` following the `NN-kebab-name.png` naming
+   convention.
+2. Delete or overwrite stale screenshots from replaced screens.
+3. Embed screenshots in the PR description with
+   `![alt](docs/screenshots/NN-name.png)` or a before/after table.
+4. If the PR is created by an automated agent, post the screenshot gallery as a
+   PR comment when the PR body is already set.
 
 ## CI pipeline
 
@@ -82,9 +144,15 @@ frontend:
   - npx tsc -b
   - npm run lint
   - npm run build
+
+e2e:
+  - go build -o /tmp/data-explorer-server ./cmd/server
+  - /tmp/data-explorer-server &          # backend on :8080
+  - npm ci && npx playwright install --with-deps chromium
+  - npm run test:e2e                     # Playwright + Vite dev server on :5173
 ```
 
-Both jobs must pass before a PR can be merged.
+All three jobs must pass before a PR can be merged.
 
 ## Test writing checklist
 
@@ -96,6 +164,10 @@ Both jobs must pass before a PR can be merged.
 - [ ] Tests do not hard-code port numbers, filesystem paths, or wall-clock times.
 - [ ] `go test ./... -race` passes locally before opening a PR.
 - [ ] `npx tsc -b` and `npm run lint` pass for any TypeScript test file added.
+- [ ] Every new or significantly changed UI page has a Playwright spec in
+  `frontend/e2e/` covering the critical happy path and one error path.
+- [ ] PR description includes screenshots of every new or changed screen (see
+  PR screenshot requirement above).
 
 ## PR screenshot requirement
 
