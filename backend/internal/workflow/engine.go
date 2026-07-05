@@ -34,11 +34,19 @@ type RunResult struct {
 }
 
 type Engine struct {
-	registry *nodes.Registry
+	registry    *nodes.Registry
+	maxRows     int
+	nodeTimeout time.Duration
 }
 
-func NewEngine(registry *nodes.Registry) *Engine {
-	return &Engine{registry: registry}
+func NewEngine(registry *nodes.Registry, maxRows int, nodeTimeout time.Duration) *Engine {
+	if maxRows <= 0 {
+		maxRows = MaxRowsPerNode
+	}
+	if nodeTimeout <= 0 {
+		nodeTimeout = MaxNodeExecutionDuration
+	}
+	return &Engine{registry: registry, maxRows: maxRows, nodeTimeout: nodeTimeout}
 }
 
 // Run executes every node in the definition in dependency order, wiring each
@@ -63,11 +71,16 @@ func (e *Engine) Run(ctx context.Context, def Definition, deps nodes.Deps) (RunR
 
 	outputs := map[string]*dataframe.Frame{}
 	result := RunResult{}
+	sourceHints := e.projectionHints(def)
+	_ = detectFusionGroups(order, buildDAG(def))
 
 	for _, id := range order {
 		node := nodeByID[id]
 
 		execInput := nodes.ExecInput{Config: node.Config, Inputs: map[string]*dataframe.Frame{}}
+		if hint, ok := sourceHints[id]; ok && len(hint.Columns) > 0 && node.Type == NodeTypeSource {
+			execInput.Projection = &hint
+		}
 		edgesIn := incoming[id]
 		for _, edge := range edgesIn {
 			upstream, ok := outputs[edge.Source]
@@ -87,7 +100,7 @@ func (e *Engine) Run(ctx context.Context, def Definition, deps nodes.Deps) (RunR
 			return result, fmt.Errorf("node %q: %w", id, err)
 		}
 
-		nodeCtx, cancel := context.WithTimeout(ctx, MaxNodeExecutionDuration)
+		nodeCtx, cancel := context.WithTimeout(ctx, e.nodeTimeout)
 		start := time.Now()
 		out, execErr := executor.Execute(nodeCtx, deps, execInput)
 		cancel()
@@ -97,9 +110,9 @@ func (e *Engine) Run(ctx context.Context, def Definition, deps nodes.Deps) (RunR
 			NodeID:     id,
 			NodeType:   string(node.Type),
 			NodeName:   node.Name,
-			RowCap:     MaxRowsPerNode,
+			RowCap:     e.maxRows,
 			DurationMs: duration.Milliseconds(),
-			TimeoutMs:  MaxNodeExecutionDuration.Milliseconds(),
+			TimeoutMs:  e.nodeTimeout.Milliseconds(),
 		}
 		if execErr != nil {
 			nodeResult.Error = execErr.Error()
@@ -119,11 +132,11 @@ func (e *Engine) Run(ctx context.Context, def Definition, deps nodes.Deps) (RunR
 		// key), and that growth happens entirely in-process with no
 		// connector-level guardrail to catch it. Capping every node's output
 		// here protects the rest of the pipeline regardless of node type.
-		out.LimitRows(MaxRowsPerNode)
+		out.LimitRows(e.maxRows)
 		if out.Meta.Truncated {
-			out.Meta = out.Meta.WithWarning("Row cap reached at %d rows. Add a filter node or narrow the source query to reduce rows.", MaxRowsPerNode)
-		} else if out.NumRows() >= int(float64(MaxRowsPerNode)*0.8) {
-			out.Meta = out.Meta.WithWarning("Row count is %d, at least 80%% of the %d row cap. Add a filter node or narrow the source query before the workflow reaches the hard limit.", out.NumRows(), MaxRowsPerNode)
+			out.Meta = out.Meta.WithWarning("Row cap reached at %d rows. Add a filter node or narrow the source query to reduce rows.", e.maxRows)
+		} else if out.NumRows() >= int(float64(e.maxRows)*0.8) {
+			out.Meta = out.Meta.WithWarning("Row count is %d, at least 80%% of the %d row cap. Add a filter node or narrow the source query before the workflow reaches the hard limit.", out.NumRows(), e.maxRows)
 		}
 
 		nodeResult.RowsOut = out.NumRows()

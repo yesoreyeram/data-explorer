@@ -31,5 +31,8 @@ func (n *SourceNode) Execute(ctx context.Context, deps Deps, in ExecInput) (*dat
 	if deps.Connections == nil {
 		return nil, fmt.Errorf("connections service not available")
 	}
+	if in.Projection != nil && len(in.Projection.Columns) > 0 {
+		cfg.Query.ProjectionHint = append([]string(nil), in.Projection.Columns...)
+	}
 	return deps.Connections.Query(ctx, cfg.ConnectionID, cfg.Query)
 }

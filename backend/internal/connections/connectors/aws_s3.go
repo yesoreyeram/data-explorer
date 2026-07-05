@@ -1,6 +1,7 @@
 package connectors
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -34,12 +35,12 @@ func executeS3(ctx context.Context, awsCfg aws.Config, spec connections.QuerySpe
 	client := s3.NewFromConfig(awsCfg)
 
 	if c.Key != "" {
-		return s3GetObject(ctx, client, c)
+		return s3GetObject(ctx, client, c, spec.RowLimit)
 	}
 	return s3ListObjects(ctx, client, spec)
 }
 
-func s3GetObject(ctx context.Context, client *s3.Client, c *connections.CloudQuerySpec) (*dataframe.Frame, error) {
+func s3GetObject(ctx context.Context, client *s3.Client, c *connections.CloudQuerySpec, rowLimit int) (*dataframe.Frame, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
@@ -62,12 +63,10 @@ func s3GetObject(ctx context.Context, client *s3.Client, c *connections.CloudQue
 	if format == "" {
 		format = InferObjectFormat(c.Key)
 	}
-	rows, err := ParseObjectRows(data, format, c.Delimiter)
+	frame, err := ParseObjectFrame(bytes.NewReader(data), format, c.Delimiter, connections.EffectiveRowLimit(rowLimit))
 	if err != nil {
 		return nil, err
 	}
-
-	frame := dataframe.FromRecords(rows)
 	frame.SetMeta(dataframe.Metadata{SourceType: "aws:s3", Truncated: truncated, Extra: map[string]any{"key": c.Key}})
 	return frame, nil
 }

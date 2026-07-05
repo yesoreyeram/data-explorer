@@ -80,6 +80,8 @@ func NewRouter(cfg *config.Config, h *handlers.Handlers, health *handlers.Health
 			r.With(custommw.RequirePermission(rbac.PermConnectionsRead)).Post("/query", h.ExploreQuery)
 		})
 
+		r.With(custommw.RequireAuth).Get("/search", h.Search)
+
 		r.Route("/workflows", func(r chi.Router) {
 			r.With(custommw.RequirePermission(rbac.PermWorkflowsRead)).Get("/", h.ListWorkflows)
 			r.With(custommw.RequirePermission(rbac.PermWorkflowsWrite)).Post("/", h.CreateWorkflow)
@@ -94,6 +96,10 @@ func NewRouter(cfg *config.Config, h *handlers.Handlers, health *handlers.Health
 
 		r.Route("/audit-logs", func(r chi.Router) {
 			r.With(custommw.RequirePermission(rbac.PermAuditRead)).Get("/", h.ListAuditLogs)
+		})
+
+		r.Route("/admin", func(r chi.Router) {
+			r.With(custommw.RequireRole("admin")).Get("/guardrails/stats", h.GuardrailStats)
 		})
 	})
 

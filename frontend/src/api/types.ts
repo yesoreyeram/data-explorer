@@ -274,6 +274,24 @@ export interface AuditLog {
   createdAt: string;
 }
 
+
+export interface SearchResult {
+  type: string;
+  id?: string;
+  name: string;
+  href: string;
+}
+
+export interface GuardrailStat {
+  limitType: string;
+  count: number;
+}
+
+export interface GuardrailStatsResponse {
+  windowHours: number;
+  items: GuardrailStat[];
+}
+
 export interface ApiErrorBody {
   error: { code: string; message: string; remediation?: string; detail?: string };
 }

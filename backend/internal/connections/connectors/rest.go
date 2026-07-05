@@ -10,22 +10,21 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yesoreyeram/data-explorer/backend/internal/config"
 	"github.com/yesoreyeram/data-explorer/backend/internal/connections"
+	"github.com/yesoreyeram/data-explorer/backend/internal/platform/safejson"
 	"github.com/yesoreyeram/data-explorer/backend/pkg/dataframe"
 	"github.com/yesoreyeram/data-explorer/backend/pkg/httpclient"
 )
 
-// RESTConfig is the non-secret configuration for a REST connection. Auth is
-// configured via the embedded AuthConfig - see httpauth.go for the full
-// matrix of supported schemes and which secret keys each expects.
 type RESTConfig struct {
 	BaseURL string `json:"baseUrl"`
 	AuthConfig
 }
 
-type REST struct{}
+type REST struct{ guardrails config.GuardrailsConfig }
 
-func NewREST() *REST { return &REST{} }
+func NewREST(guardrails config.GuardrailsConfig) *REST { return &REST{guardrails: guardrails} }
 
 func (r *REST) parseConfig(cfgJSON json.RawMessage) (RESTConfig, error) {
 	var cfg RESTConfig
@@ -50,11 +49,7 @@ func (r *REST) client(ctx context.Context, cfg RESTConfig, secret map[string]str
 	if err != nil {
 		return nil, fmt.Errorf("configure authentication: %w", err)
 	}
-	return httpclient.New(httpclient.Config{
-		Timeout: 30 * time.Second,
-		Auth:    auth,
-		Retry:   httpclient.DefaultRetryPolicy,
-	}), nil
+	return httpclient.New(httpclient.Config{Timeout: r.guardrails.NodeTimeout, MaxResponseBytes: r.guardrails.MaxBodyBytes, MaxRedirects: r.guardrails.MaxRedirects, DecompressRatio: r.guardrails.DecompressRatio, Auth: auth, Retry: httpclient.DefaultRetryPolicy}), nil
 }
 
 func (r *REST) buildRequest(ctx context.Context, cfg RESTConfig, spec connections.QuerySpec) (*http.Request, error) {
@@ -73,17 +68,14 @@ func (r *REST) buildRequest(ctx context.Context, cfg RESTConfig, spec connection
 		}
 		target.RawQuery = q.Encode()
 	}
-
 	method := spec.Method
 	if method == "" {
 		method = http.MethodGet
 	}
-
 	var body io.Reader
 	if len(spec.Body) > 0 {
 		body = strings.NewReader(string(spec.Body))
 	}
-
 	req, err := http.NewRequestWithContext(ctx, strings.ToUpper(method), target.String(), body)
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
@@ -107,7 +99,6 @@ func (r *REST) Test(ctx context.Context, cfgJSON json.RawMessage, secret map[str
 	if err != nil {
 		return err
 	}
-
 	req, err := r.buildRequest(ctx, cfg, connections.QuerySpec{Method: http.MethodGet})
 	if err != nil {
 		return err
@@ -136,12 +127,10 @@ func (r *REST) Execute(ctx context.Context, cfgJSON json.RawMessage, secret map[
 	if err != nil {
 		return nil, err
 	}
-
 	limit := connections.EffectiveRowLimit(spec.RowLimit)
 	frame := dataframe.New(nil)
 	truncated := false
 	warnings := []string(nil)
-
 	appendPage := func(decoded any, itemsPath string) {
 		items := extractItems(decoded, itemsPath)
 		for _, item := range items {
@@ -152,13 +141,22 @@ func (r *REST) Execute(ctx context.Context, cfgJSON json.RawMessage, secret map[
 			frame.AppendRow(toRowMap(item))
 		}
 	}
-
+	decodeBody := func(body []byte) (any, error) {
+		var decoded any
+		if len(body) == 0 {
+			return nil, nil
+		}
+		if err := safejson.Unmarshal(body, &decoded, r.guardrails.JSONMaxDepth, r.guardrails.JSONMaxElements); err != nil {
+			return nil, fmt.Errorf("response is not valid bounded JSON: %w", err)
+		}
+		return decoded, nil
+	}
 	if spec.Pagination != nil && spec.Pagination.Strategy != "" && spec.Pagination.Strategy != "none" {
 		paginator, err := buildRESTPaginator(spec.Pagination)
 		if err != nil {
 			return nil, err
 		}
-		result, err := client.DoPaginated(ctx, req, paginator, maxPagesOf(spec.Pagination))
+		result, err := client.DoPaginated(ctx, req, paginator, maxPagesOf(spec.Pagination, r.guardrails.MaxPages))
 		if err != nil {
 			return nil, fmt.Errorf("paginated request failed: %w", err)
 		}
@@ -170,10 +168,14 @@ func (r *REST) Execute(ctx context.Context, cfgJSON json.RawMessage, secret map[
 				return nil, fmt.Errorf("upstream returned status %d: %s", page.Response.StatusCode, truncateForError(page.Response.Body))
 			}
 			if page.Response.Truncated {
-				return nil, connections.NewGuardrailError(connections.ErrCodeInvalidConfig, "HTTP response body bytes", httpclient.DefaultMaxResponseBytes, int64(len(page.Response.Body))+1, "Reduce page size, add filters, or narrow the request.")
+				return nil, connections.NewGuardrailError(connections.ErrCodeInvalidConfig, "HTTP response body bytes", r.guardrails.MaxBodyBytes, int64(len(page.Response.Body))+1, "Reduce page size, add filters, or narrow the request.")
 			}
 			warnings = appendBodyCapWarning(warnings, len(page.Response.Body))
-			appendPage(page.Data, spec.Pagination.ItemsPath)
+			decoded, err := decodeBody(page.Response.Body)
+			if err != nil {
+				return nil, err
+			}
+			appendPage(decoded, spec.Pagination.ItemsPath)
 			if truncated {
 				break
 			}
@@ -187,25 +189,17 @@ func (r *REST) Execute(ctx context.Context, cfgJSON json.RawMessage, secret map[
 			return nil, fmt.Errorf("upstream returned status %d: %s", resp.StatusCode, truncateForError(resp.Body))
 		}
 		if resp.Truncated {
-			return nil, connections.NewGuardrailError(connections.ErrCodeInvalidConfig, "HTTP response body bytes", httpclient.DefaultMaxResponseBytes, int64(len(resp.Body))+1, "Reduce page size, add filters, or narrow the request.")
+			return nil, connections.NewGuardrailError(connections.ErrCodeInvalidConfig, "HTTP response body bytes", r.guardrails.MaxBodyBytes, int64(len(resp.Body))+1, "Reduce page size, add filters, or narrow the request.")
 		}
 		warnings = appendBodyCapWarning(warnings, len(resp.Body))
-		var decoded any
-		if len(resp.Body) > 0 {
-			if err := json.Unmarshal(resp.Body, &decoded); err != nil {
-				return nil, fmt.Errorf("response is not valid JSON: %w", err)
-			}
+		decoded, err := decodeBody(resp.Body)
+		if err != nil {
+			return nil, err
 		}
 		appendPage(decoded, "")
 	}
-
-	frame.SetMeta(dataframe.Metadata{
-		SourceType:  "rest",
-		GeneratedAt: start,
-		DurationMs:  time.Since(start).Milliseconds(),
-		Truncated:   truncated,
-		Warnings:    warnings,
-	})
+	frame.LimitColumns(r.guardrails.MaxColumns)
+	frame.SetMeta(dataframe.Metadata{SourceType: "rest", GeneratedAt: start, DurationMs: time.Since(start).Milliseconds(), Truncated: truncated || frame.Meta.Truncated, Warnings: warnings})
 	return frame, nil
 }
 

@@ -74,6 +74,12 @@ Guardrail UI conventions:
 - Workflow node run metadata (`rowsOut`, `rowCap`, `truncated`, `warnings`,
   `timeoutMs`) should be surfaced on the canvas with text labels as well as
   warning/danger styling.
+- Use the shared navigation layer (`navigation.ts` + `navigationStore.ts`) for
+  breadcrumbs, favorites, recent activity, and the command palette instead of
+  page-local implementations.
+- Prefer `DataFrameView`'s built-in chart/table/split modes and
+  `savedChartsStore` for quick visualizations before introducing a new
+  dashboard-specific chart flow.
 
 ### 4. First login
 
@@ -90,9 +96,11 @@ WHERE u.email = 'you@example.com' AND r.name = 'admin';
 ## Environment variables (backend)
 
 All configuration is environment variables (`internal/config/config.go`) -
-no config files. Everything has a safe local-dev default except in
-`APP_ENV=production`, where `JWT_SIGNING_KEY` and `CONNECTION_ENCRYPTION_KEY`
-are required.
+with one operator-facing exception: `GUARDRAILS_CONFIG_FILE` can point to a
+small JSON document that overrides the platform guardrails and per-role
+explore/workflow hourly quotas. Everything else has a safe local-dev default
+except in `APP_ENV=production`, where `JWT_SIGNING_KEY` and
+`CONNECTION_ENCRYPTION_KEY` are required.
 
 | Variable                     | Default                                   | Notes                                              |
 | ----------------------------- | ------------------------------------------ | --------------------------------------------------- |
@@ -105,6 +113,7 @@ are required.
 | `ACCESS_TOKEN_TTL`              | `15m`                                     |                                                       |
 | `REFRESH_TOKEN_TTL`             | `168h` (7d)                               |                                                       |
 | `LOG_LEVEL` / `LOG_FORMAT`      | `info` / `json`                           | `LOG_FORMAT=text` for readable local dev logs        |
+| `GUARDRAILS_CONFIG_FILE`        | unset                                     | optional JSON overrides for body/row/page/timeout/cell/JSON limits and `role_quotas` |
 
 ## Code conventions
 
@@ -193,6 +202,9 @@ Steps, using the existing connectors as templates
    ```go
    connectorRegistry.Register("my-source", connectors.NewMySource())
    ```
+   HTTP-backed connectors should receive the current `config.GuardrailsConfig`
+   so safe JSON decoding, redirect/page/body limits, and decompression-ratio
+   protection stay centralized.
 6. Add the type to `domain.ConnectionType` (`internal/domain/models.go`), the
    frontend's `ConnectionType` union (`frontend/src/api/types.ts`), and the
    type-specific config fields in

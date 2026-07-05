@@ -28,7 +28,7 @@ func TestEngineCapsPerNodeRowCount(t *testing.T) {
 
 	def := Definition{Nodes: []Node{{ID: "src", Type: NodeTypeSource}}}
 
-	engine := NewEngine(registry)
+	engine := NewEngine(registry, MaxRowsPerNode, 0)
 	result, err := engine.Run(context.Background(), def, nodes.Deps{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)

@@ -180,8 +180,14 @@ func (h *Handlers) QueryConnection(w http.ResponseWriter, r *http.Request) {
 	h.recordAudit(r, "connection.query", "connection", id, outcome, meta)
 
 	if err != nil {
+		for _, kind := range guardrailTripKindsFromError(err) {
+			h.recordGuardrailTrip(r, kind, map[string]any{"scope": "connection_query"})
+		}
 		writeQueryError(w, err)
 		return
+	}
+	for _, kind := range guardrailTripKindsFromFrameWarnings(result.Meta.Warnings) {
+		h.recordGuardrailTrip(r, kind, map[string]any{"scope": "connection_query"})
 	}
 	httpx.WriteJSON(w, http.StatusOK, result)
 }

@@ -142,3 +142,28 @@ func (s *Service) List(ctx context.Context, f ListFilter) ([]domain.AuditLog, in
 	}
 	return out, total, rows.Err()
 }
+
+type GuardrailTripStat struct {
+	LimitType string
+	Count     int
+}
+
+func (s *Service) GuardrailTrips(ctx context.Context, since time.Time) ([]GuardrailTripStat, error) {
+	rows, err := s.db.Query(ctx, `SELECT split_part(action, '.', 3) AS limit_type, count(*)
+		FROM audit_logs
+		WHERE action LIKE 'guardrail.trip.%' AND created_at >= $1
+		GROUP BY 1`, since)
+	if err != nil {
+		return nil, fmt.Errorf("query guardrail trips: %w", err)
+	}
+	defer rows.Close()
+	var out []GuardrailTripStat
+	for rows.Next() {
+		var stat GuardrailTripStat
+		if err := rows.Scan(&stat.LimitType, &stat.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, stat)
+	}
+	return out, rows.Err()
+}

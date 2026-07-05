@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -18,17 +19,24 @@ import (
 // protecting the server from a runaway pipeline (e.g. a huge join fan-out).
 const MaxExecutionDuration = 2 * time.Minute
 
+var ErrMemoryPressure = errors.New("workflow execution rejected due to memory pressure")
+
 type Service struct {
 	repo             *Repository
 	engine           *Engine
 	connections      *connections.Service
+	runTimeout       time.Duration
+	pressure         interface{ IsUnderPressure() bool }
 	inFlight         atomic.Int64
 	activeMu         sync.Mutex
 	activeByWorkflow map[string]int
 }
 
-func NewService(repo *Repository, engine *Engine, connSvc *connections.Service) *Service {
-	return &Service{repo: repo, engine: engine, connections: connSvc, activeByWorkflow: make(map[string]int)}
+func NewService(repo *Repository, engine *Engine, connSvc *connections.Service, runTimeout time.Duration, pressure interface{ IsUnderPressure() bool }) *Service {
+	if runTimeout <= 0 {
+		runTimeout = MaxExecutionDuration
+	}
+	return &Service{repo: repo, engine: engine, connections: connSvc, runTimeout: runTimeout, pressure: pressure, activeByWorkflow: make(map[string]int)}
 }
 
 func (s *Service) Create(ctx context.Context, name, description string, definition json.RawMessage, createdBy string) (domain.Workflow, error) {
@@ -143,6 +151,10 @@ func (s *Service) Execute(ctx context.Context, workflowID, triggeredBy string) (
 		return domain.WorkflowExecution{}, nil, fmt.Errorf("invalid workflow definition: %w", err)
 	}
 
+	if s.pressure != nil && s.pressure.IsUnderPressure() {
+		return domain.WorkflowExecution{}, nil, ErrMemoryPressure
+	}
+
 	execRecord, err := s.repo.CreateExecution(ctx, workflowID, triggeredBy)
 	if err != nil {
 		return domain.WorkflowExecution{}, nil, err
@@ -159,7 +171,7 @@ func (s *Service) Execute(ctx context.Context, workflowID, triggeredBy string) (
 		s.activeMu.Unlock()
 	}()
 
-	runCtx, cancel := context.WithTimeout(ctx, MaxExecutionDuration)
+	runCtx, cancel := context.WithTimeout(ctx, s.runTimeout)
 	defer cancel()
 
 	start := time.Now()

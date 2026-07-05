@@ -27,7 +27,9 @@ import (
 	"github.com/yesoreyeram/data-explorer/backend/internal/platform/crypto"
 	"github.com/yesoreyeram/data-explorer/backend/internal/platform/dbx"
 	"github.com/yesoreyeram/data-explorer/backend/internal/platform/logger"
+	"github.com/yesoreyeram/data-explorer/backend/internal/platform/memory"
 	"github.com/yesoreyeram/data-explorer/backend/internal/platform/migrator"
+	"github.com/yesoreyeram/data-explorer/backend/internal/quota"
 	"github.com/yesoreyeram/data-explorer/backend/internal/scheduler"
 	"github.com/yesoreyeram/data-explorer/backend/internal/workflow"
 	"github.com/yesoreyeram/data-explorer/backend/internal/workflow/nodes"
@@ -77,26 +79,30 @@ func run() error {
 	connectorRegistry := connections.NewRegistry()
 	connectorRegistry.Register(string(domain.ConnectionTypePostgres), connectors.NewPostgres())
 	connectorRegistry.Register(string(domain.ConnectionTypeMySQL), connectors.NewMySQL())
-	connectorRegistry.Register(string(domain.ConnectionTypeREST), connectors.NewREST())
-	connectorRegistry.Register(string(domain.ConnectionTypeGraphQL), connectors.NewGraphQL())
+	connectorRegistry.Register(string(domain.ConnectionTypeREST), connectors.NewREST(cfg.Guardrails))
+	connectorRegistry.Register(string(domain.ConnectionTypeGraphQL), connectors.NewGraphQL(cfg.Guardrails))
 	connectorRegistry.Register(string(domain.ConnectionTypeAWS), connectors.NewAWS())
 	connectorRegistry.Register(string(domain.ConnectionTypeGCP), connectors.NewGCP())
 	connectorRegistry.Register(string(domain.ConnectionTypeAzure), connectors.NewAzure())
 
 	connRepo := connections.NewRepository(pool)
-	connSvc := connections.NewService(connRepo, encryptor, connectorRegistry)
+	connSvc := connections.NewService(connRepo, encryptor, connectorRegistry, cfg.Guardrails)
+
+	pressure := memory.NewPressureMonitor(1024, 768)
+	go pressure.Start(ctx)
+	quotas := quota.NewService(cfg.Guardrails)
 
 	nodeRegistry := nodes.DefaultRegistry()
 	wfRepo := workflow.NewRepository(pool)
-	wfEngine := workflow.NewEngine(nodeRegistry)
-	wfSvc := workflow.NewService(wfRepo, wfEngine, connSvc)
+	wfEngine := workflow.NewEngine(nodeRegistry, cfg.Guardrails.MaxRows, cfg.Guardrails.NodeTimeout)
+	wfSvc := workflow.NewService(wfRepo, wfEngine, connSvc, cfg.Guardrails.RunTimeout, pressure)
 
 	catalogSvc := catalog.NewService()
 
 	metrics := observability.NewMetrics()
 
 	shutdownState := handlers.NewShutdownState()
-	h := handlers.New(authSvc, authRepo, auditSvc, connSvc, wfSvc, catalogSvc, metrics, cfg.Env == "production", cfg.Auth.RefreshTokenTTL)
+	h := handlers.New(authSvc, authRepo, auditSvc, connSvc, wfSvc, catalogSvc, metrics, quotas, cfg.Env == "production", cfg.Auth.RefreshTokenTTL)
 	healthHandler := handlers.NewHealthHandler(pool, wfSvc, shutdownState)
 
 	router := api.NewRouter(cfg, h, healthHandler, tokenManager, metrics)

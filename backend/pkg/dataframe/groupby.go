@@ -1,6 +1,7 @@
 package dataframe
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -150,6 +151,9 @@ func toFloat(v any) (float64, bool) {
 		return float64(n), true
 	case int32:
 		return float64(n), true
+	case json.Number:
+		f, err := n.Float64()
+		return f, err == nil
 	default:
 		return 0, false
 	}

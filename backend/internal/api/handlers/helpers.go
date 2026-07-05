@@ -37,3 +37,10 @@ func principalOrEmpty(r *http.Request) rbac.Principal {
 	p, _ := rbac.FromContext(r.Context())
 	return p
 }
+
+func (h *Handlers) recordGuardrailTrip(r *http.Request, limitType string, metadata map[string]any) {
+	if limitType == "" {
+		return
+	}
+	h.recordAudit(r, "guardrail.trip."+limitType, "guardrail", limitType, audit.OutcomeFailure, metadata)
+}
