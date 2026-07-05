@@ -332,9 +332,14 @@ Being upfront about what this is *not*, yet:
 - **No per-column/row data masking.** Anyone with `connections:read` and
   access to a connection can see all columns/rows that connection's
   credentials expose, subject to the row limit.
-- **Rate limiting is in-process and per-instance.** Behind a
-  horizontally-scaled deployment, front the API with a shared limiter (e.g.
-  at a load balancer/API gateway) in addition to the built-in one.
+- **API rate limiting can be shared across instances.** By default the
+  per-request limiter is in-process (per instance); set `REDIS_URL` to use a
+  shared Redis-backed token bucket so a horizontally-scaled deployment
+  enforces one budget across all instances. The general limiter keys on the
+  authenticated user (falling back to the client IP), which is harder to evade
+  than a pure per-IP limit; the auth endpoints stay IP-keyed since there's no
+  principal yet. On a Redis error the limiter fails open (logs and allows) so
+  a Redis outage degrades abuse control, not availability.
 - **The `EnsureReadOnlySQL` guard is a keyword/prefix check, not a full SQL
   parser.** It is a defense-in-depth layer, not the primary control - always
   use least-privilege, read-only database credentials for connections.
@@ -345,9 +350,12 @@ Being upfront about what this is *not*, yet:
   pure-Go Kerberos implementation) doesn't accept a context today. Operators
   using Kerberos should ensure their KDC is reliably reachable from the
   server.
-- **Per-connection rate limiting is in-memory and per-instance**, the same
-  caveat as the per-IP limiter above: a horizontally-scaled deployment needs
-  a shared limiter to enforce a single global budget per connection.
+- **Per-connection rate limiting is still in-memory and per-instance.** The
+  API-level limiter can be shared via `REDIS_URL` (above), but the
+  per-connection throttle inside `connections.Service` (which protects the
+  *downstream* system) is not yet shared; a horizontally-scaled deployment
+  needs a shared limiter there too to enforce a single global budget per
+  connection.
 - **Cloud connector least-privilege is the operator's responsibility, not
   enforced here.** Same principle as "use a read-only DB role" for
   Postgres/MySQL: the IAM role/service account/service principal behind an

@@ -18,7 +18,7 @@ import (
 	"github.com/yesoreyeram/data-explorer/backend/internal/rbac"
 )
 
-func NewRouter(cfg *config.Config, h *handlers.Handlers, health *handlers.HealthHandler, tokens *auth.TokenManager, metrics *observability.Metrics) http.Handler {
+func NewRouter(cfg *config.Config, h *handlers.Handlers, health *handlers.HealthHandler, tokens *auth.TokenManager, metrics *observability.Metrics, generalLimiter, authLimiter custommw.Limiter) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(custommw.RequestID)
@@ -34,9 +34,10 @@ func NewRouter(cfg *config.Config, h *handlers.Handlers, health *handlers.Health
 	r.Use(custommw.AccessLog(metrics))
 	r.Use(custommw.Authenticate(tokens))
 
-	authLimiter := custommw.NewIPRateLimiter(2, 10) // ~2 req/s sustained, burst 10 - blunts credential stuffing
-	generalLimiter := custommw.NewIPRateLimiter(20, 60)
-	r.Use(generalLimiter.Middleware)
+	// General traffic is limited per authenticated user (falling back to IP);
+	// the auth endpoints are limited per IP since there's no principal yet.
+	authRateLimit := custommw.RateLimit(authLimiter, custommw.KeyByIP)
+	r.Use(custommw.RateLimit(generalLimiter, custommw.KeyByUserOrIP))
 
 	r.Get("/healthz", health.Healthz)
 	r.Get("/readyz", health.Readyz)
@@ -44,9 +45,9 @@ func NewRouter(cfg *config.Config, h *handlers.Handlers, health *handlers.Health
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Route("/auth", func(r chi.Router) {
-			r.With(authLimiter.Middleware).Post("/register", h.Register)
-			r.With(authLimiter.Middleware).Post("/login", h.Login)
-			r.With(authLimiter.Middleware).Post("/refresh", h.Refresh)
+			r.With(authRateLimit).Post("/register", h.Register)
+			r.With(authRateLimit).Post("/login", h.Login)
+			r.With(authRateLimit).Post("/refresh", h.Refresh)
 			r.Post("/logout", h.Logout)
 			r.With(custommw.RequireAuth).Get("/me", h.Me)
 		})

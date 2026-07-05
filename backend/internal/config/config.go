@@ -19,6 +19,13 @@ type Config struct {
 	Auth   AuthConfig
 	Log    LogConfig
 	Egress EgressConfig
+	Redis  RedisConfig
+}
+
+// RedisConfig enables a shared, cross-instance rate limiter. When URL is empty
+// the app uses in-process per-instance limiters instead.
+type RedisConfig struct {
+	URL string
 }
 
 // EgressConfig controls the SSRF egress guard applied to every outbound
@@ -98,6 +105,9 @@ func Load() (*Config, error) {
 			Policy:      getEnv("EGRESS_POLICY", "allow-private"),
 			Allowlist:   splitCSV(getEnv("EGRESS_ALLOWLIST", "")),
 			PolicyAdhoc: getEnv("EGRESS_POLICY_ADHOC", ""),
+		},
+		Redis: RedisConfig{
+			URL: getEnv("REDIS_URL", ""),
 		},
 	}
 

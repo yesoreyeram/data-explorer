@@ -14,8 +14,10 @@ import (
 	"time"
 
 	"github.com/yesoreyeram/data-explorer/backend/db"
+	"github.com/yesoreyeram/data-explorer/backend/internal/adapters/ratelimit"
 	"github.com/yesoreyeram/data-explorer/backend/internal/api"
 	"github.com/yesoreyeram/data-explorer/backend/internal/api/handlers"
+	custommw "github.com/yesoreyeram/data-explorer/backend/internal/api/middleware"
 	"github.com/yesoreyeram/data-explorer/backend/internal/audit"
 	"github.com/yesoreyeram/data-explorer/backend/internal/auth"
 	"github.com/yesoreyeram/data-explorer/backend/internal/catalog"
@@ -33,6 +35,8 @@ import (
 	"github.com/yesoreyeram/data-explorer/backend/internal/workflow"
 	"github.com/yesoreyeram/data-explorer/backend/internal/workflow/nodes"
 	"github.com/yesoreyeram/data-explorer/backend/pkg/egress"
+
+	"github.com/redis/go-redis/v9"
 )
 
 func main() {
@@ -133,10 +137,28 @@ func run() error {
 
 	metrics := observability.NewMetrics()
 
+	// Rate limiters: shared (Redis) when REDIS_URL is set so a scaled
+	// deployment enforces one budget across instances, else in-process.
+	var generalLimiter, authLimiter custommw.Limiter
+	if cfg.Redis.URL != "" {
+		opt, err := redis.ParseURL(cfg.Redis.URL)
+		if err != nil {
+			return fmt.Errorf("parse REDIS_URL: %w", err)
+		}
+		rdb := redis.NewClient(opt)
+		defer rdb.Close()
+		generalLimiter = ratelimit.New(rdb, 20, 60, "rl:gen:", log)
+		authLimiter = ratelimit.New(rdb, 2, 10, "rl:auth:", log)
+		log.Info("using shared Redis rate limiter")
+	} else {
+		generalLimiter = custommw.NewIPRateLimiter(20, 60)
+		authLimiter = custommw.NewIPRateLimiter(2, 10) // ~2 req/s, burst 10 - blunts credential stuffing
+	}
+
 	h := handlers.New(authSvc, authRepo, auditSvc, connSvc, wfSvc, catalogSvc, cfg.Env == "production", cfg.Auth.RefreshTokenTTL)
 	healthHandler := handlers.NewHealthHandler(pool)
 
-	router := api.NewRouter(cfg, h, healthHandler, tokenManager, metrics)
+	router := api.NewRouter(cfg, h, healthHandler, tokenManager, metrics, generalLimiter, authLimiter)
 
 	srv := &http.Server{
 		Addr:              cfg.HTTP.Addr,
