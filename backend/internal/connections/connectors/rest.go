@@ -23,9 +23,9 @@ type RESTConfig struct {
 	AuthConfig
 }
 
-type REST struct{}
+type REST struct{ opts Options }
 
-func NewREST() *REST { return &REST{} }
+func NewREST(opts Options) *REST { return &REST{opts: opts} }
 
 func (r *REST) parseConfig(cfgJSON json.RawMessage) (RESTConfig, error) {
 	var cfg RESTConfig
@@ -46,14 +46,18 @@ func (r *REST) parseConfig(cfgJSON json.RawMessage) (RESTConfig, error) {
 }
 
 func (r *REST) client(ctx context.Context, cfg RESTConfig, secret map[string]string) (*httpclient.Client, error) {
-	auth, err := buildAuthenticator(ctx, cfg.AuthConfig, secret)
+	dial := r.opts.dial(ctx)
+	auth, err := buildAuthenticator(ctx, cfg.AuthConfig, secret, dial)
 	if err != nil {
 		return nil, fmt.Errorf("configure authentication: %w", err)
 	}
 	return httpclient.New(httpclient.Config{
-		Timeout: 30 * time.Second,
-		Auth:    auth,
-		Retry:   httpclient.DefaultRetryPolicy,
+		Timeout:          30 * time.Second,
+		Auth:             auth,
+		Retry:            httpclient.DefaultRetryPolicy,
+		DialContext:      dial,
+		MaxResponseBytes: r.opts.MaxResponseBytes,
+		UserAgent:        r.opts.UserAgent,
 	}), nil
 }
 
@@ -93,9 +97,45 @@ func (r *REST) buildRequest(ctx context.Context, cfg RESTConfig, spec connection
 	}
 	req.Header.Set("Accept", "application/json")
 	for k, v := range spec.Headers {
+		if r.opts.StrictHeaders {
+			if err := validateOutboundHeader(k); err != nil {
+				return nil, err
+			}
+		}
 		req.Header.Set(k, v)
 	}
 	return req, nil
+}
+
+// reservedHeaders are hop-by-hop or transport-controlled headers a caller must
+// not be able to set on an outbound request built by the relay.
+var reservedHeaders = map[string]struct{}{
+	"host":              {},
+	"connection":        {},
+	"content-length":    {},
+	"transfer-encoding": {},
+	"keep-alive":        {},
+	"proxy-connection":  {},
+	"upgrade":           {},
+	"te":                {},
+	"trailer":           {},
+}
+
+func validateOutboundHeader(name string) error {
+	if name == "" {
+		return connections.NewConfigError("Header name must not be empty.")
+	}
+	// RFC 7230 token: no separators or control characters.
+	for _, c := range name {
+		if c <= ' ' || c >= 0x7f || strings.ContainsRune("()<>@,;:\\\"/[]?={}", c) {
+			return connections.NewConfigError(fmt.Sprintf("Header name %q contains invalid characters.", name))
+		}
+	}
+	lower := strings.ToLower(name)
+	if _, bad := reservedHeaders[lower]; bad || strings.HasPrefix(lower, "x-forwarded-") || strings.HasPrefix(lower, "proxy-") {
+		return connections.NewConfigError(fmt.Sprintf("Header %q may not be set.", name))
+	}
+	return nil
 }
 
 func (r *REST) Test(ctx context.Context, cfgJSON json.RawMessage, secret map[string]string) error {

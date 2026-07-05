@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"time"
 )
@@ -38,6 +39,14 @@ type Config struct {
 	// Auth is the authentication strategy applied to every request. Nil
 	// means no authentication is added.
 	Auth Authenticator
+	// DialContext, when set, replaces the transport's dialer. It is the seam
+	// through which an egress guard (SSRF defense) validates and pins every
+	// outbound connection - including redirects, retries, and pagination, all
+	// of which reuse this transport. Nil uses the default dialer.
+	DialContext func(ctx context.Context, network, addr string) (net.Conn, error)
+	// UserAgent, when set, is applied to every request that doesn't already
+	// carry one - so an outbound relay identifies itself honestly to upstreams.
+	UserAgent string
 }
 
 const (
@@ -69,7 +78,12 @@ type Client struct {
 func New(cfg Config) *Client {
 	cfg.setDefaults()
 
-	base := http.DefaultTransport
+	// Clone the default transport (never mutate the shared global) and, when a
+	// guarded dialer is supplied, route every connection through it.
+	base := http.DefaultTransport.(*http.Transport).Clone()
+	if cfg.DialContext != nil {
+		base.DialContext = cfg.DialContext
+	}
 	transport := http.RoundTripper(base)
 
 	// Auth schemes that need to react to a response (Digest's
@@ -102,12 +116,32 @@ func New(cfg Config) *Client {
 	return &Client{cfg: cfg, http: httpClient}
 }
 
+// DialFunc is the dialer signature shared by http.Transport.DialContext,
+// pgconn.Config.DialFunc, and mysql.RegisterDialContext.
+type DialFunc = func(ctx context.Context, network, addr string) (net.Conn, error)
+
+// GuardedHTTPClient builds an *http.Client whose transport dials through
+// dialContext. It's used to bring token-endpoint calls (OAuth2, workload
+// identity) - which don't go through the main Client - under the same egress
+// policy. A nil dialContext yields a plain client with the given timeout.
+func GuardedHTTPClient(dialContext DialFunc, timeout time.Duration) *http.Client {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	if dialContext != nil {
+		t.DialContext = dialContext
+	}
+	return &http.Client{Transport: t, Timeout: timeout}
+}
+
 // Do sends req, applying authentication, then reads the response body up to
 // MaxResponseBytes and returns it as a *Response. The caller does not need
 // to close anything - the underlying body is always fully drained and
 // closed by Do.
 func (c *Client) Do(ctx context.Context, req *http.Request) (*Response, error) {
 	req = req.WithContext(ctx)
+
+	if c.cfg.UserAgent != "" && req.Header.Get("User-Agent") == "" {
+		req.Header.Set("User-Agent", c.cfg.UserAgent)
+	}
 
 	if c.cfg.Auth != nil {
 		if err := c.cfg.Auth.Authenticate(ctx, req); err != nil {

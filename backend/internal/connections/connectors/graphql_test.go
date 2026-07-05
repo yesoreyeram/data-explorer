@@ -26,7 +26,7 @@ func TestGraphQLExecuteRelayEdges(t *testing.T) {
 	defer srv.Close()
 
 	cfgJSON, _ := json.Marshal(GraphQLConfig{Endpoint: srv.URL})
-	g := NewGraphQL()
+	g := NewGraphQL(Options{})
 
 	frame, err := g.Execute(context.Background(), cfgJSON, nil, connections.QuerySpec{
 		RowLimit: 100,
@@ -52,7 +52,7 @@ func TestGraphQLExecutePropagatesGraphQLErrors(t *testing.T) {
 	defer srv.Close()
 
 	cfgJSON, _ := json.Marshal(GraphQLConfig{Endpoint: srv.URL})
-	g := NewGraphQL()
+	g := NewGraphQL(Options{})
 
 	_, err := g.Execute(context.Background(), cfgJSON, nil, connections.QuerySpec{
 		GraphQL: &connections.GraphQLSpec{Query: "query { bogus }"},
@@ -94,7 +94,7 @@ func TestGraphQLExecuteWithRelayPagination(t *testing.T) {
 	defer srv.Close()
 
 	cfgJSON, _ := json.Marshal(GraphQLConfig{Endpoint: srv.URL})
-	g := NewGraphQL()
+	g := NewGraphQL(Options{})
 
 	frame, err := g.Execute(context.Background(), cfgJSON, nil, connections.QuerySpec{
 		RowLimit: 100,

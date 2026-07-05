@@ -21,7 +21,7 @@ func TestRESTExecuteSimpleArray(t *testing.T) {
 	defer srv.Close()
 
 	cfgJSON, _ := json.Marshal(RESTConfig{BaseURL: srv.URL, AuthConfig: AuthConfig{AuthType: "bearer"}})
-	rest := NewREST()
+	rest := NewREST(Options{})
 
 	frame, err := rest.Execute(context.Background(), cfgJSON, map[string]string{"bearerToken": "tok123"}, connections.QuerySpec{Method: "GET", RowLimit: 10})
 	if err != nil {
@@ -42,7 +42,7 @@ func TestRESTExecuteRejectsBadAuth(t *testing.T) {
 	defer srv.Close()
 
 	cfgJSON, _ := json.Marshal(RESTConfig{BaseURL: srv.URL})
-	rest := NewREST()
+	rest := NewREST(Options{})
 	if _, err := rest.Execute(context.Background(), cfgJSON, nil, connections.QuerySpec{Method: "GET"}); err == nil {
 		t.Fatal("expected error for 401 response")
 	}
@@ -63,7 +63,7 @@ func TestRESTExecuteWithOffsetPagination(t *testing.T) {
 	defer srv.Close()
 
 	cfgJSON, _ := json.Marshal(RESTConfig{BaseURL: srv.URL})
-	rest := NewREST()
+	rest := NewREST(Options{})
 
 	frame, err := rest.Execute(context.Background(), cfgJSON, nil, connections.QuerySpec{
 		Method:   "GET",
@@ -91,7 +91,7 @@ func TestRESTExecuteEnforcesRowLimitAcrossPages(t *testing.T) {
 	defer srv.Close()
 
 	cfgJSON, _ := json.Marshal(RESTConfig{BaseURL: srv.URL})
-	rest := NewREST()
+	rest := NewREST(Options{})
 
 	frame, err := rest.Execute(context.Background(), cfgJSON, nil, connections.QuerySpec{
 		Method:   "GET",
@@ -115,7 +115,7 @@ func TestRESTExecuteEnforcesRowLimitAcrossPages(t *testing.T) {
 }
 
 func TestRESTConfigRejectsMissingBaseURL(t *testing.T) {
-	rest := NewREST()
+	rest := NewREST(Options{})
 	_, err := rest.Execute(context.Background(), json.RawMessage(`{}`), nil, connections.QuerySpec{})
 	if err == nil {
 		t.Fatal("expected error for missing baseUrl")

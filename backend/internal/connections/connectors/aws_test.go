@@ -6,7 +6,7 @@ import (
 )
 
 func TestAWSParseConfigRequiresRegion(t *testing.T) {
-	a := NewAWS()
+	a := NewAWS(Options{})
 	cfgJSON, _ := json.Marshal(AWSConfig{Service: "s3"})
 	if _, err := a.parseConfig(cfgJSON); err == nil {
 		t.Fatal("expected an error when region is missing")
@@ -14,7 +14,7 @@ func TestAWSParseConfigRequiresRegion(t *testing.T) {
 }
 
 func TestAWSParseConfigRejectsUnknownService(t *testing.T) {
-	a := NewAWS()
+	a := NewAWS(Options{})
 	cfgJSON, _ := json.Marshal(AWSConfig{Region: "us-east-1", Service: "redshift"})
 	if _, err := a.parseConfig(cfgJSON); err == nil {
 		t.Fatal("expected an error for an unsupported service")
@@ -22,7 +22,7 @@ func TestAWSParseConfigRejectsUnknownService(t *testing.T) {
 }
 
 func TestAWSParseConfigAcceptsEachKnownService(t *testing.T) {
-	a := NewAWS()
+	a := NewAWS(Options{})
 	for _, svc := range []string{"athena", "cloudwatchLogs", "dynamodb", "s3"} {
 		cfgJSON, _ := json.Marshal(AWSConfig{Region: "us-east-1", Service: svc})
 		if _, err := a.parseConfig(cfgJSON); err != nil {

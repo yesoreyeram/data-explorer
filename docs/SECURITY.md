@@ -124,6 +124,42 @@ Operators who want to restrict this capability to a smaller group than
 role rather than bundling it with broader connection-management
 permissions.
 
+## Outbound egress control (SSRF defense)
+
+Every connector dials a network target on a user's behalf, so a dial-time
+egress guard (`backend/pkg/egress`) is applied underneath all of them - HTTP
+via `pkg/httpclient`, Postgres via `pgconn.Config.DialFunc`, MySQL via the
+driver's registered dialer, and the OAuth2 / workload-identity token endpoints
+that make their own outbound calls. The guard resolves DNS itself, validates
+**every** returned IP against policy, and then dials only the validated literal
+IP - so a hostname that passes the check cannot be re-resolved to a different
+address between check and connect (a DNS-rebinding / TOCTOU defense), and a
+multi-record answer that mixes one disallowed IP in is rejected wholesale.
+
+- **The metadata endpoints and loopback are always denied**, in every policy
+  mode: link-local (`169.254.0.0/16`, `fe80::/10`, covering the AWS/GCP/Azure
+  metadata IP and the ECS credentials IP), the metadata hostnames
+  (`metadata.google.internal`, etc.), loopback, unspecified, multicast,
+  broadcast, NAT64, and their IPv4-mapped IPv6 forms (so `::ffff:169.254.169.254`
+  can't slip past the v4 rules). These are the SSRF "prizes" no connector ever
+  legitimately needs.
+- **Policy is configurable** via `EGRESS_POLICY`:
+  - `allow-private` (default) permits RFC1918/internal targets - so an
+    internal database keeps working - while still denying everything above.
+  - `allowlist` (`EGRESS_ALLOWLIST`) permits only named `host[:port]` patterns.
+  - `public-only` additionally denies all private ranges, for deployments that
+    only ever reach public APIs.
+- **The ad-hoc path can be locked down further.** `EGRESS_POLICY_ADHOC`
+  applies a stricter policy to temporary-connection queries (which dial fully
+  arbitrary, user-supplied targets) than to vetted saved connections.
+- **DSN hygiene** on the SQL connectors rejects a host that smuggles an
+  alternate target past the guard (a unix socket, a multi-host DSN, an invalid
+  `sslmode`), and the connectors dial from typed, validated components rather
+  than a pass-through connection string.
+- Because the guard is enforced at dial time, an absolute `path` on a REST
+  request that tries to override the vetted base URL's host is still caught -
+  the final resolved address is what hits the dialer.
+
 ## Outbound HTTP (REST/GraphQL connectors and `pkg/httpclient`)
 
 The REST and GraphQL connectors are built on `backend/pkg/httpclient`, a
@@ -233,7 +269,8 @@ might fail:
 | Auth endpoints | stricter per-IP rate limit (credential stuffing) | `api/middleware/ratelimit.go` |
 | All endpoints | general per-IP rate limit | `api/middleware/ratelimit.go` |
 | Per connection | per-connection-ID rate limit (protects the *downstream* system) | `connections.Service` |
-| SQL connectors | read-only statement guard, parameterized queries, statement timeout | `connectors/sqlguard.go`, `connectors/postgres.go` |
+| Every outbound dial | egress guard: metadata/loopback denied, DNS-rebinding-safe IP pinning, configurable policy | `pkg/egress` |
+| SQL connectors | read-only statement guard, parameterized queries, statement timeout, DSN hygiene | `connectors/sqlguard.go`, `connectors/postgres.go` |
 | REST/GraphQL connectors | response size cap, redirect cap, bounded jittered retry | `pkg/httpclient` |
 | Cloud query engines (Athena, CloudWatch Logs Insights) | bounded async poll wait (55s) | `connectors.AsyncQueryMaxWait` |
 | Cloud object storage (S3, GCS, Blob Storage) | object size cap (50MB) | `connectors.MaxObjectBytes` |

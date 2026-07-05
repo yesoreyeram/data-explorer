@@ -70,6 +70,10 @@ type WorkloadIdentityConfig struct {
 	// the subject token is itself the proof of identity).
 	ClientID     string
 	ClientSecret string
+	// HTTPClient, when set, is used for the token-exchange request instead of
+	// a default client. This is the seam an egress guard uses to ensure the
+	// token endpoint is subject to the same SSRF policy as every other dial.
+	HTTPClient *http.Client
 }
 
 // WorkloadIdentityAuth exchanges a subject token for an access token per
@@ -87,7 +91,13 @@ func NewWorkloadIdentityAuth(cfg WorkloadIdentityConfig) *WorkloadIdentityAuth {
 	if cfg.RequestedTokenType == "" {
 		cfg.RequestedTokenType = TokenTypeAccessToken
 	}
-	return &WorkloadIdentityAuth{cfg: cfg, client: &http.Client{Timeout: 15 * time.Second}}
+	client := cfg.HTTPClient
+	if client == nil {
+		client = &http.Client{Timeout: 15 * time.Second}
+	} else if client.Timeout == 0 {
+		client.Timeout = 15 * time.Second
+	}
+	return &WorkloadIdentityAuth{cfg: cfg, client: client}
 }
 
 func (a *WorkloadIdentityAuth) Authenticate(ctx context.Context, req *http.Request) error {

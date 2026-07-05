@@ -31,6 +31,7 @@ import (
 	"github.com/yesoreyeram/data-explorer/backend/internal/scheduler"
 	"github.com/yesoreyeram/data-explorer/backend/internal/workflow"
 	"github.com/yesoreyeram/data-explorer/backend/internal/workflow/nodes"
+	"github.com/yesoreyeram/data-explorer/backend/pkg/egress"
 )
 
 func main() {
@@ -74,17 +75,49 @@ func run() error {
 
 	auditSvc := audit.NewService(pool, log)
 
+	// Build the SSRF egress guard and register every connector to dial through
+	// it. The default policy blocks cloud metadata and loopback while still
+	// permitting internal databases (see internal/config EgressConfig).
+	baseGuard, err := egress.New(egress.Config{
+		Mode:      egress.Mode(cfg.Egress.Policy),
+		Allowlist: cfg.Egress.Allowlist,
+	})
+	if err != nil {
+		return fmt.Errorf("configure egress guard: %w", err)
+	}
+
+	connectorTypes := []string{
+		string(domain.ConnectionTypePostgres),
+		string(domain.ConnectionTypeMySQL),
+		string(domain.ConnectionTypeREST),
+		string(domain.ConnectionTypeGraphQL),
+		string(domain.ConnectionTypeAWS),
+		string(domain.ConnectionTypeGCP),
+		string(domain.ConnectionTypeAzure),
+	}
 	connectorRegistry := connections.NewRegistry()
-	connectorRegistry.Register(string(domain.ConnectionTypePostgres), connectors.NewPostgres())
-	connectorRegistry.Register(string(domain.ConnectionTypeMySQL), connectors.NewMySQL())
-	connectorRegistry.Register(string(domain.ConnectionTypeREST), connectors.NewREST())
-	connectorRegistry.Register(string(domain.ConnectionTypeGraphQL), connectors.NewGraphQL())
-	connectorRegistry.Register(string(domain.ConnectionTypeAWS), connectors.NewAWS())
-	connectorRegistry.Register(string(domain.ConnectionTypeGCP), connectors.NewGCP())
-	connectorRegistry.Register(string(domain.ConnectionTypeAzure), connectors.NewAzure())
+	if err := connectors.RegisterAll(connectorRegistry, connectorTypes, connectors.Options{
+		DialContext:   baseGuard.DialContext,
+		StrictHeaders: true,
+	}); err != nil {
+		return fmt.Errorf("register connectors: %w", err)
+	}
 
 	connRepo := connections.NewRepository(pool)
 	connSvc := connections.NewService(connRepo, encryptor, connectorRegistry)
+
+	// The ad-hoc path dials arbitrary user-supplied targets; apply the
+	// stricter egress policy there when one is configured.
+	if cfg.Egress.PolicyAdhoc != "" {
+		adhocGuard, err := egress.New(egress.Config{
+			Mode:      egress.Mode(cfg.Egress.PolicyAdhoc),
+			Allowlist: cfg.Egress.Allowlist,
+		})
+		if err != nil {
+			return fmt.Errorf("configure ad-hoc egress guard: %w", err)
+		}
+		connSvc.SetAdhocDialContext(adhocGuard.DialContext)
+	}
 
 	nodeRegistry := nodes.DefaultRegistry()
 	wfRepo := workflow.NewRepository(pool)

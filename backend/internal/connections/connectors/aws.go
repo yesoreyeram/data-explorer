@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/yesoreyeram/data-explorer/backend/internal/connections"
 	"github.com/yesoreyeram/data-explorer/backend/pkg/dataframe"
+	"github.com/yesoreyeram/data-explorer/backend/pkg/httpclient"
 )
 
 // AWSConfig is the non-secret configuration for an "aws" connection.
@@ -51,9 +53,9 @@ type AWSConfig struct {
 	RoleSessionName string `json:"roleSessionName,omitempty"`
 }
 
-type AWS struct{}
+type AWS struct{ opts Options }
 
-func NewAWS() *AWS { return &AWS{} }
+func NewAWS(opts Options) *AWS { return &AWS{opts: opts} }
 
 func (a *AWS) parseConfig(cfgJSON json.RawMessage) (AWSConfig, error) {
 	var cfg AWSConfig
@@ -76,8 +78,15 @@ func (a *AWS) parseConfig(cfgJSON json.RawMessage) (AWSConfig, error) {
 // credential chain. If RoleArn is set, that base identity is then used to
 // assume the target role via STS, and the resulting temporary credentials
 // (auto-refreshed on expiry) are what the connector actually uses.
-func awsConfig(ctx context.Context, cfg AWSConfig, secret map[string]string) (aws.Config, error) {
+func awsConfig(ctx context.Context, cfg AWSConfig, secret map[string]string, dial httpclient.DialFunc) (aws.Config, error) {
 	opts := []func(*awsconfig.LoadOptions) error{awsconfig.WithRegion(cfg.Region)}
+
+	// Route all SDK HTTP - including the IMDS metadata call the default
+	// credential chain makes - through the egress guard. AWS SigV4 signing is
+	// independent of the HTTP client, so this does not disturb authentication.
+	if dial != nil {
+		opts = append(opts, awsconfig.WithHTTPClient(httpclient.GuardedHTTPClient(dial, 30*time.Second)))
+	}
 
 	if accessKey := secret["accessKeyId"]; accessKey != "" {
 		opts = append(opts, awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
@@ -111,7 +120,7 @@ func (a *AWS) Test(ctx context.Context, cfgJSON json.RawMessage, secret map[stri
 	if err != nil {
 		return err
 	}
-	awsCfg, err := awsConfig(ctx, cfg, secret)
+	awsCfg, err := awsConfig(ctx, cfg, secret, a.opts.dial(ctx))
 	if err != nil {
 		return err
 	}
@@ -138,7 +147,7 @@ func (a *AWS) Execute(ctx context.Context, cfgJSON json.RawMessage, secret map[s
 	if spec.Cloud == nil {
 		return nil, fmt.Errorf("this connection requires a cloud query spec")
 	}
-	awsCfg, err := awsConfig(ctx, cfg, secret)
+	awsCfg, err := awsConfig(ctx, cfg, secret, a.opts.dial(ctx))
 	if err != nil {
 		return nil, err
 	}

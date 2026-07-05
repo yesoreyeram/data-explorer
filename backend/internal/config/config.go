@@ -13,11 +13,27 @@ import (
 )
 
 type Config struct {
-	Env  string // development | production | test
-	HTTP HTTPConfig
-	DB   DBConfig
-	Auth AuthConfig
-	Log  LogConfig
+	Env    string // development | production | test
+	HTTP   HTTPConfig
+	DB     DBConfig
+	Auth   AuthConfig
+	Log    LogConfig
+	Egress EgressConfig
+}
+
+// EgressConfig controls the SSRF egress guard applied to every outbound
+// connector dial. See pkg/egress for the policy semantics.
+type EgressConfig struct {
+	// Policy: allow-private (default) | allowlist | public-only. The default
+	// permits internal databases but always blocks cloud metadata and
+	// loopback - the targets no connector legitimately needs.
+	Policy string
+	// Allowlist holds host[:port] patterns for the allowlist policy.
+	Allowlist []string
+	// PolicyAdhoc optionally applies a stricter policy to the ad-hoc query
+	// path (temporary connections dial fully arbitrary targets). Empty means
+	// "same as Policy".
+	PolicyAdhoc string
 }
 
 type HTTPConfig struct {
@@ -73,6 +89,11 @@ func Load() (*Config, error) {
 			Level:  getEnv("LOG_LEVEL", "info"),
 			Format: getEnv("LOG_FORMAT", "json"),
 		},
+		Egress: EgressConfig{
+			Policy:      getEnv("EGRESS_POLICY", "allow-private"),
+			Allowlist:   splitCSV(getEnv("EGRESS_ALLOWLIST", "")),
+			PolicyAdhoc: getEnv("EGRESS_POLICY_ADHOC", ""),
+		},
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -99,6 +120,27 @@ func (c *Config) validate() error {
 		// session can still be decrypted after a restart. Base64 of 32 zero-ish
 		// dev-marker bytes - never use this outside local development.
 		c.Auth.EncryptionKeyBase64 = "ZGV2LW9ubHktaW5zZWN1cmUtMzJieXRlLWtleSEhISE="
+	}
+	if err := validateEgressPolicy(c.Egress.Policy, c.Egress.Allowlist); err != nil {
+		return err
+	}
+	if c.Egress.PolicyAdhoc != "" {
+		if err := validateEgressPolicy(c.Egress.PolicyAdhoc, c.Egress.Allowlist); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateEgressPolicy(policy string, allowlist []string) error {
+	switch policy {
+	case "allow-private", "public-only":
+	case "allowlist":
+		if len(allowlist) == 0 {
+			return fmt.Errorf("EGRESS_ALLOWLIST must be set when the egress policy is 'allowlist'")
+		}
+	default:
+		return fmt.Errorf("egress policy %q is not valid (allow-private | allowlist | public-only)", policy)
 	}
 	return nil
 }

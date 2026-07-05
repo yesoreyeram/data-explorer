@@ -20,9 +20,9 @@ type GraphQLConfig struct {
 	AuthConfig
 }
 
-type GraphQL struct{}
+type GraphQL struct{ opts Options }
 
-func NewGraphQL() *GraphQL { return &GraphQL{} }
+func NewGraphQL(opts Options) *GraphQL { return &GraphQL{opts: opts} }
 
 func (g *GraphQL) parseConfig(cfgJSON json.RawMessage) (GraphQLConfig, error) {
 	var cfg GraphQLConfig
@@ -43,14 +43,18 @@ func (g *GraphQL) parseConfig(cfgJSON json.RawMessage) (GraphQLConfig, error) {
 }
 
 func (g *GraphQL) client(ctx context.Context, cfg GraphQLConfig, secret map[string]string) (*httpclient.Client, error) {
-	auth, err := buildAuthenticator(ctx, cfg.AuthConfig, secret)
+	dial := g.opts.dial(ctx)
+	auth, err := buildAuthenticator(ctx, cfg.AuthConfig, secret, dial)
 	if err != nil {
 		return nil, fmt.Errorf("configure authentication: %w", err)
 	}
 	return httpclient.New(httpclient.Config{
-		Timeout: 30 * time.Second,
-		Auth:    auth,
-		Retry:   httpclient.DefaultRetryPolicy,
+		Timeout:          30 * time.Second,
+		Auth:             auth,
+		Retry:            httpclient.DefaultRetryPolicy,
+		DialContext:      dial,
+		MaxResponseBytes: g.opts.MaxResponseBytes,
+		UserAgent:        g.opts.UserAgent,
 	}), nil
 }
 
